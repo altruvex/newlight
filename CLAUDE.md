@@ -12,25 +12,31 @@ packages/
   database/           @repo/database — Prisma client + schema, shared by both apps
   mail/               @repo/mail — the only sender of email; templates + transactional outbox
   notifications/      @repo/notifications — the only writer of notifications; Web Push sweep
-  eslint-config/       shared ESLint config
   typescript-config/   shared tsconfig base
 ```
+
+There is no `packages/eslint-config` — it had no consumers and was deleted in P1 (see the
+comment in `packages/database/eslint.config.mjs`). Each app carries its own local
+`eslint.config.mjs` (`eslint-config-next` core-web-vitals + typescript); `packages/database`
+has its own standalone flat config.
 
 ## Stack
 
 - **Next.js 16** (App Router), **React 19**, **TypeScript**
-- **Prisma 6** ORM against Postgres (Neon adapter), schema in [packages/database/prisma/schema.prisma](packages/database/prisma/schema.prisma)
-- **Clerk** for auth in both apps
+- **Prisma 7** ORM against Postgres (Neon-hosted, via the `@prisma/adapter-pg` driver adapter —
+  not the Neon serverless adapter), schema in [packages/database/prisma/schema.prisma](packages/database/prisma/schema.prisma)
+- **Better Auth** for auth in both apps (`lib/auth.ts` is the one seam per app; migrated off
+  Clerk in P2 — see `docs/adr/0004-auth-seam.md`)
 - **Tailwind CSS 4**, shadcn-style UI components under `components/ui` in each app
 - **next-intl** for i18n in `www` (locales: `en`, `ar` — RTL-aware; messages in `apps/www/messages/*.json`)
 - **@tanstack/react-query** for client data fetching, **react-hook-form** + **zod** for forms/validation
-- **framer-motion** / **gsap** for animation
+- **framer-motion** / **gsap** for animation (`www` only — `admin` has neither)
 - **pino** for logging (`lib/logger.ts` in each app)
 - PWA support (`@ducanh2912/next-pwa` in www, service worker + manifest in both)
 
 ## Key domain models (Prisma)
 
-Category/SubCategory (+ translations), Product/ProductTranslation, Cart/CartItem, Order/OrderItem, ShippingAddress, User, ContactForm(+Response/Tag), Notification, PushSubscription, SystemSetting, Configuration.
+Category/SubCategory (+ translations), Product/ProductTranslation, Cart/CartItem, Order/OrderItem, ShippingAddress, User, ContactForm(+Response/Tag), Notification, PushSubscription, SystemSetting, ProductConfiguration.
 
 Translated content (Category, SubCategory, Product) uses a `*Translation` side-table pattern — check both the base model and its translation model when touching product/category data.
 
@@ -61,10 +67,14 @@ pnpm lint
 Database (`cd packages/database`):
 
 ```bash
-pnpm db:generate      # prisma generate (+ import path fix script) — run after schema changes
+pnpm db:generate      # prisma generate — run after schema changes
 pnpm db:push          # push schema to DB (no migration file)
 pnpm db:migrate       # prisma migrate dev
-pnpm db:migrate:to X  # apply the chain up to migration X (0011 is held back until P2)
+pnpm db:migrate:to X  # apply the chain up to migration X, in order. Used to replay history:
+                      # 0011_drop_v1_catalog_columns is destructive and refuses to run before
+                      # the v1->v2 transform (it counts rows) — the ordering that mattered during
+                      # the P1/P2 cutover, already applied on the working branch, still enforced
+                      # by the migration itself on any fresh database
 pnpm db:status        # which migrations are applied
 pnpm db:studio
 pnpm verify           # prisma validate + format
