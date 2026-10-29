@@ -304,7 +304,8 @@ export class ProductService {
 
         const variants = await prisma.product.findMany({
             where: { familyId: product.familyId, ...liveProduct },
-            orderBy: { displayOrder: "asc" },
+            // displayOrder is admin-entered and can tie; the rest keeps the buttons in one order.
+            orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
             include: { ...productCardInclude(locale), family: true },
         })
 

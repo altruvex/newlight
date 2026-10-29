@@ -89,6 +89,25 @@ describe("soft delete is the default", () => {
         const actions = await db.prisma.adminAuditLog.findMany({ select: { action: true }, orderBy: { createdAt: "asc" } })
         expect(actions.map((a) => a.action)).toEqual(["product.soft_delete", "product.restore"])
     })
+
+    it("refuses to restore a product whose variant value was taken while it was archived", async () => {
+        const CatalogService = await catalog()
+
+        await CatalogService.softDelete(fixture.products.small)
+        await db.prisma.product.update({
+            where: { id: fixture.products.single },
+            data: { familyId: fixture.familyId, variantValue: "5w" },
+        })
+
+        await expect(CatalogService.restore(fixture.products.small)).rejects.toThrow(
+            /nl-single already uses the variant "5w".*before restoring it/
+        )
+        const still = await db.prisma.product.findUniqueOrThrow({
+            where: { id: fixture.products.small },
+            select: { deletedAt: true },
+        })
+        expect(still.deletedAt).not.toBeNull()
+    })
 })
 
 describe("hard delete refuses while anything still refers to the product", () => {

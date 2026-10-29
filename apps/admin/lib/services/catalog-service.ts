@@ -64,6 +64,15 @@ export class CatalogService {
 
     static async restore(productId: string) {
         const admin = await requireCurrentAdmin()
+        const archived = await prisma.product.findUniqueOrThrow({
+            where: { id: productId },
+            select: { familyId: true, variantValue: true },
+        })
+        // While it was archived another product may have taken its variant value in the family.
+        if (archived.familyId) {
+            const clash = await variantClash(archived.familyId, archived.variantValue, productId)
+            if (clash) throw new CatalogError(`${clash} Change this product's variant value or family before restoring it.`)
+        }
         const product = await prisma.$transaction(async (tx) => {
             const updated = await tx.product.update({
                 where: { id: productId },
