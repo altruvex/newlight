@@ -338,3 +338,9 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Arabic is a joined script: any letter-spacing pulls its letters apart. Unlayered so it
+   outranks every tracking-* utility and the heading rule above, whatever the page sets. */
+:lang(ar) {
+  letter-spacing: normal;
+}
