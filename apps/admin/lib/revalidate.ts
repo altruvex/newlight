@@ -5,11 +5,16 @@ export type RevalidationTarget =
     | { kind: "all" }
 
 export async function revalidateStorefront(target: RevalidationTarget): Promise<{ ok: boolean; error?: string }> {
-    const url = process.env.STOREFRONT_REVALIDATION_URL
+    // On Vercel the admin -> www service binding injects STOREFRONT_URL (internal and
+    // deployment-aware, so a preview admin revalidates its own preview storefront).
+    // STOREFRONT_REVALIDATION_URL stays as the fallback for running admin with plain `next dev`.
+    const url = process.env.STOREFRONT_URL
+        ? new URL("api/revalidate", process.env.STOREFRONT_URL)
+        : process.env.STOREFRONT_REVALIDATION_URL
     const secret = process.env.STOREFRONT_REVALIDATION_SECRET
 
     if (!url || !secret) {
-        console.warn("[revalidate] STOREFRONT_REVALIDATION_URL or _SECRET is not set; the storefront will serve stale pages until its own timer expires.")
+        console.warn("[revalidate] STOREFRONT_URL (or STOREFRONT_REVALIDATION_URL) or STOREFRONT_REVALIDATION_SECRET is not set; the storefront will serve stale pages until its own timer expires.")
         return { ok: false, error: "not configured" }
     }
 

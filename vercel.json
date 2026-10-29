@@ -1,0 +1,33 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "www": {
+      "root": "apps/www",
+      "framework": "nextjs"
+    },
+    "admin": {
+      "root": "apps/admin",
+      "framework": "nextjs",
+      "bindings": [
+        { "type": "service", "service": "www", "format": "url", "env": "STOREFRONT_URL" }
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "admin.newlight-eg.com" }],
+      "destination": { "service": "admin" }
+    },
+    {
+      "source": "/(.*)",
+      "destination": { "service": "www" }
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/sweep",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}
