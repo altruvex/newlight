@@ -37,7 +37,7 @@ export default function ProductVariantsSelector({
         setSelectedVariant(variant.productId)
 
         startTransition(() => {
-            const newUrl = `/${locale}/category/${categorySlug}/${subCategorySlug}/${variant.productId}`
+            const newUrl = `/${locale}/category/${categorySlug}/${subCategorySlug}/${variant.slug}`
             router.replace(newUrl, { scroll: false })
         })
     }
@@ -84,6 +84,9 @@ export default function ProductVariantsSelector({
 
     const variantType = variants[0]?.family?.variantType ?? null
     const typeLabel = getVariantTypeLabel(variantType)
+    // Show every option's price once they differ, so the buttons compare like for like
+    // instead of being measured against whichever variant happens to sort first.
+    const pricesVary = variants.some((variant) => variant.price !== variants[0].price)
 
     return (
         <div className="space-y-4">
@@ -105,7 +108,7 @@ export default function ProductVariantsSelector({
                             onClick={() => !isOutOfStock && handleVariantChange(variant)}
                             disabled={isOutOfStock || isPending}
                             className={cn(
-                                "group relative transition-all duration-300 min-w-[80px]",
+                                "group relative h-auto min-w-[80px] flex-col gap-0.5 py-2 transition-all duration-300",
                                 isSelected
                                     ? "border-accent bg-accent/10 scale-105 shadow-md ease-in-out"
                                     : "border-border hover:border-accent/50 hover:bg-accent/5"
@@ -130,10 +133,10 @@ export default function ProductVariantsSelector({
                                     </span>
                                 </div>
                             )}
-                            {variant.price !== variants[0].price && (
-                                <div className="absolute -top-2 -right-2 bg-accent text-accent-foreground text-xs px-2 py-1 rounded-sm">
+                            {pricesVary && (
+                                <span className="text-xs font-light tabular-nums text-muted-foreground">
                                     {formatMoney(variant.price, locale)}
-                                </div>
+                                </span>
                             )}
                         </Button>
                     )

@@ -87,6 +87,33 @@ describe("families scatter rather than destroy", () => {
         expect(product.familyId).toBe(fixture.familyId)
         expect(product.variantValue).toBe("20w")
     })
+
+    it("refuses a variant value another product in the family already uses", async () => {
+        const { FamilyService } = await services()
+
+        await expect(
+            FamilyService.setProductFamily(fixture.products.single, fixture.familyId, "5W")
+        ).rejects.toThrow(/nl-test-5w already uses the variant "5W"/)
+        const product = await db.prisma.product.findUniqueOrThrow({ where: { id: fixture.products.single } })
+        expect(product.familyId).toBeNull()
+    })
+
+    it("lets a product keep its own variant value when re-saved", async () => {
+        const { FamilyService } = await services()
+        await FamilyService.setProductFamily(fixture.products.small, fixture.familyId, "5w")
+
+        const product = await db.prisma.product.findUniqueOrThrow({ where: { id: fixture.products.small } })
+        expect(product.variantValue).toBe("5w")
+    })
+
+    it("frees the value once the product holding it is archived", async () => {
+        const { FamilyService } = await services()
+        await db.prisma.product.update({ where: { id: fixture.products.small }, data: { deletedAt: new Date() } })
+
+        await FamilyService.setProductFamily(fixture.products.single, fixture.familyId, "5w")
+        const product = await db.prisma.product.findUniqueOrThrow({ where: { id: fixture.products.single } })
+        expect(product.familyId).toBe(fixture.familyId)
+    })
 })
 
 describe("a colour cannot be deleted out from under the products wearing it", () => {

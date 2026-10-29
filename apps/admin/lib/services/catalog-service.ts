@@ -9,6 +9,7 @@ import {
 } from "@repo/database"
 import { requireCurrentAdmin } from "@/lib/auth"
 import { revalidateStorefront } from "@/lib/revalidate"
+import { variantClash } from "@/lib/services/reference-service"
 
 export interface DeletionBlockers {
     orderItems: number
@@ -288,6 +289,10 @@ export async function createProduct(input: NewProductInput) {
         )
     }
     if (bySlug) throw new CatalogCreationError(`The URL /${slug} is already taken.`)
+    if (input.familyId) {
+        const clash = await variantClash(input.familyId, input.variantValue)
+        if (clash) throw new CatalogCreationError(clash)
+    }
 
     const product = await prisma.$transaction(async (tx) => {
         const created = await tx.product.create({

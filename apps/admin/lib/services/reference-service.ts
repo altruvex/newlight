@@ -9,6 +9,27 @@ export class ReferenceError_ extends Error {
     }
 }
 
+// A family renders as one row of option buttons on the storefront, one per variant value, so two
+// products sharing a value show up as two identical buttons. Archived products are ignored;
+// inactive ones are not, because activating one later would bring the clash back.
+// Returns the reason the value is taken, or null when it is free.
+export async function variantClash(familyId: string, variantValue: string | null, excludeProductId?: string) {
+    const value = variantValue?.trim()
+    if (!value) return null
+    const clash = await prisma.product.findFirst({
+        where: {
+            familyId,
+            deletedAt: null,
+            variantValue: { equals: value, mode: "insensitive" },
+            ...(excludeProductId ? { id: { not: excludeProductId } } : {}),
+        },
+        select: { productId: true },
+    })
+    return clash
+        ? `${clash.productId} already uses the variant "${value}" in this family. Edit or archive that product instead of adding a second one.`
+        : null
+}
+
 export class FamilyService {
     static async list() {
         await requireCurrentAdmin()
@@ -153,6 +174,8 @@ export class FamilyService {
                     `"${family.slug}" belongs to a different sub-category. Move the product first, or pick a family from its own.`
                 )
             }
+            const clash = await variantClash(familyId, variantValue, productId)
+            if (clash) throw new ReferenceError_(clash)
         }
 
         await prisma.$transaction(async (tx) => {
