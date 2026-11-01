@@ -31,6 +31,13 @@ export interface TranslationPair {
 const TRANSLATABLE_FIELDS = ["name", "description", "metaTitle", "metaDescription"] as const
 type TranslatableField = (typeof TRANSLATABLE_FIELDS)[number]
 
+interface CompletenessRow {
+    entityId: string
+    reference: string
+    locales: Record<Locale, { exists: boolean }>
+    completeness: Record<Locale, { missing: string[] }>
+}
+
 function emptyFields(): TranslationFields {
     return { name: null, description: null, metaTitle: null, metaDescription: null }
 }
@@ -166,22 +173,71 @@ export class TranslationService {
         await revalidateStorefront({ kind: "all" })
     }
 
-    static async queue(limit = 100) {
-        await requireCurrentAdmin()
+    /**
+     * One pass over the catalogue for both the coverage stats and the work queue. Postgres decides
+     * which fields are blank (same rules as score()), so no description or meta text leaves the
+     * database; only a few booleans per product and locale do.
+     */
+    // The blank tests use JS `.trim()`'s whitespace set (NBSP, BOM, Unicode spaces), not just
+    // [[:space:]], so the queue and the product tab agree on what is missing.
+    private static async completeness(): Promise<CompletenessRow[]> {
+        const rows = await prisma.$queryRaw<
+            Array<{
+                id: string
+                sku: string
+                locale: string | null
+                nameMissing: boolean | null
+                descriptionMissing: boolean | null
+                metaTitleMissing: boolean | null
+                metaDescriptionMissing: boolean | null
+            }>
+        >`
+            SELECT p.id,
+                   p."productId" AS sku,
+                   t.locale,
+                   (t.name IS NULL OR t.name ~ '^[[:space:]   -     　﻿]*$' OR t.name ~ '^[[:space:]   -     　﻿]*-[[:space:]   -     　﻿]*$'
+                       OR lower(regexp_replace(t.name, '^[[:space:]   -     　﻿]+|[[:space:]   -     　﻿]+$', '', 'g')) = lower(p."productId")) AS "nameMissing",
+                   (t.description IS NULL OR t.description ~ '^[[:space:]   -     　﻿]*$') AS "descriptionMissing",
+                   (t."metaTitle" IS NULL OR t."metaTitle" ~ '^[[:space:]   -     　﻿]*$') AS "metaTitleMissing",
+                   (t."metaDescription" IS NULL OR t."metaDescription" ~ '^[[:space:]   -     　﻿]*$') AS "metaDescriptionMissing"
+            FROM products p
+            LEFT JOIN product_translations t ON t."productId" = p.id AND t.locale = ANY(${[...LOCALES]}::text[])
+            WHERE p."deletedAt" IS NULL
+            ORDER BY p."productId" ASC`
 
-        const products = await prisma.product.findMany({
-            where: { deletedAt: null },
-            select: { id: true, productId: true, translations: true },
-            orderBy: { productId: "asc" },
-        })
+        const byProduct = new Map<string, CompletenessRow>()
+        for (const row of rows) {
+            let entry = byProduct.get(row.id)
+            if (!entry) {
+                entry = { entityId: row.id, reference: row.sku, locales: {}, completeness: {} } as CompletenessRow
+                for (const locale of LOCALES) {
+                    entry.locales[locale] = { exists: false }
+                    entry.completeness[locale] = { missing: [...TRANSLATABLE_FIELDS] }
+                }
+                byProduct.set(row.id, entry)
+            }
+            if (row.locale === null || !(LOCALES as readonly string[]).includes(row.locale)) continue
+            const locale = row.locale as Locale
+            entry.locales[locale] = { exists: true }
+            entry.completeness[locale] = {
+                missing: [
+                    row.nameMissing && "name",
+                    row.descriptionMissing && "description",
+                    row.metaTitleMissing && "metaTitle",
+                    row.metaDescriptionMissing && "metaDescription",
+                ].filter((field): field is string => Boolean(field)),
+            }
+        }
+        return [...byProduct.values()]
+    }
 
-        const rows = products
-            .map((p) => pair("product", p.id, p.productId, p.translations, p.productId))
-            .map((entry) => {
-                const missing = LOCALES.reduce((sum, l) => sum + entry.completeness[l].missing.length, 0)
-                const absentLocales = LOCALES.filter((l) => !entry.locales[l].exists)
-                return { ...entry, missingCount: missing, absentLocales }
-            })
+    private static toQueue(products: CompletenessRow[]) {
+        return products
+            .map((entry) => ({
+                ...entry,
+                missingCount: LOCALES.reduce((sum, l) => sum + entry.completeness[l].missing.length, 0),
+                absentLocales: LOCALES.filter((l) => !entry.locales[l].exists),
+            }))
             .filter((entry) => entry.missingCount > 0)
             .sort(
                 (a, b) =>
@@ -189,32 +245,44 @@ export class TranslationService {
                     b.missingCount - a.missingCount ||
                     a.reference.localeCompare(b.reference)
             )
+    }
 
+    private static toCoverage(products: CompletenessRow[]) {
+        const perLocale = {} as Record<Locale, { complete: number; partial: number; absent: number }>
+        for (const locale of LOCALES) perLocale[locale] = { complete: 0, partial: 0, absent: 0 }
+
+        for (const p of products) {
+            for (const locale of LOCALES) {
+                if (!p.locales[locale].exists) perLocale[locale].absent += 1
+                else if (p.completeness[locale].missing.length === 0) perLocale[locale].complete += 1
+                else perLocale[locale].partial += 1
+            }
+        }
+        return { products: products.length, perLocale }
+    }
+
+    /** Coverage stats plus one page of the work queue, from a single query. */
+    static async overview(page: number, pageSize: number) {
+        await requireCurrentAdmin()
+        const products = await this.completeness()
+        const queue = this.toQueue(products)
+        const totalPages = Math.max(1, Math.ceil(queue.length / pageSize))
+        const current = Math.min(Math.max(1, page), totalPages)
+        return {
+            coverage: this.toCoverage(products),
+            queue: { total: queue.length, rows: queue.slice((current - 1) * pageSize, current * pageSize) },
+        }
+    }
+
+    static async queue(limit = 100) {
+        await requireCurrentAdmin()
+        const rows = this.toQueue(await this.completeness())
         return { total: rows.length, rows: rows.slice(0, limit) }
     }
 
     static async coverage() {
         await requireCurrentAdmin()
-        const products = await prisma.product.findMany({
-            where: { deletedAt: null },
-            select: { id: true, productId: true, translations: true },
-            orderBy: { productId: "asc" },
-        })
-
-        const perLocale = {} as Record<Locale, { complete: number; partial: number; absent: number }>
-        for (const locale of LOCALES) perLocale[locale] = { complete: 0, partial: 0, absent: 0 }
-
-        for (const p of products) {
-            const entry = pair("product", p.id, p.productId, p.translations, p.productId)
-            for (const locale of LOCALES) {
-                const c = entry.completeness[locale]
-                if (!entry.locales[locale].exists) perLocale[locale].absent += 1
-                else if (c.missing.length === 0) perLocale[locale].complete += 1
-                else perLocale[locale].partial += 1
-            }
-        }
-
-        return { products: products.length, perLocale }
+        return this.toCoverage(await this.completeness())
     }
 }
 

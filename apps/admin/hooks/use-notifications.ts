@@ -35,10 +35,11 @@ export function useNotifications(pollMs = 60_000) {
             if (!response.ok) throw new Error("failed to load notifications")
             return response.json()
         },
-        refetchInterval: () =>
-            typeof document === "undefined" || document.visibilityState === "visible" ? pollMs : pollMs * 8,
+        // No polling at all while the tab is hidden; coming back to it refetches (window focus).
+        refetchInterval: pollMs,
+        refetchIntervalInBackground: false,
         refetchOnWindowFocus: true,
-        staleTime: 5_000,
+        staleTime: 30_000,
         retry: 2,
     })
 

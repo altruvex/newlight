@@ -18,15 +18,16 @@ export default async function InventoryPage({
 
     const state = parseTableState(params, { sort: "available", dir: "asc", pageSize: 50 })
 
-    const [lowStockCount, reports, openingFlag, products, stock] = await Promise.all([
+    const [lowStockCount, reports, openingFlag, products, withoutCost, stock] = await Promise.all([
         InventoryService.lowStockCount(10),
-        InventoryService.reportsForLastDays(30),
+        InventoryService.valuationAndMargin(30),
         prisma.systemSetting.findUnique({ where: { key: OPENING_COUNT_PENDING_KEY }, select: { value: true } }),
         prisma.product.findMany({
             where: { deletedAt: null },
             select: { id: true, productId: true, averageCost: true },
             orderBy: { productId: "asc" },
         }),
+        prisma.product.count({ where: { deletedAt: null, averageCost: null } }),
         InventoryService.stockLevels({
             search: state.filters.q,
             filter: state.filters.filter,
@@ -40,7 +41,6 @@ export default async function InventoryPage({
     ])
 
     const openingPending = openingFlag?.value === "true"
-    const withoutCost = products.filter((p) => p.averageCost === null).length
 
     const unavailableReason = (reason: string | undefined) =>
         reason === "opening-count-pending" ? "opening count pending" : "cost not recorded"

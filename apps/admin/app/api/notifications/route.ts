@@ -40,15 +40,24 @@ export async function GET(request: NextRequest) {
             where.type = parsedType.data
         }
 
-        const notifications = await prisma.notification.findMany({
-            where,
-            orderBy: { createdAt: "desc" },
-            take: limit,
-        })
-
-        const unreadCount = await prisma.notification.count({
-            where: { ...live, isRead: false },
-        })
+        const [notifications, unreadCount] = await Promise.all([
+            prisma.notification.findMany({
+                where,
+                orderBy: { createdAt: "desc" },
+                take: limit,
+                select: {
+                    id: true,
+                    type: true,
+                    title: true,
+                    message: true,
+                    actionUrl: true,
+                    isRead: true,
+                    priority: true,
+                    createdAt: true,
+                },
+            }),
+            prisma.notification.count({ where: { ...live, isRead: false } }),
+        ])
 
         return NextResponse.json({
             notifications,

@@ -9,6 +9,7 @@ import {
     subtractMoney,
     sumMoney,
     type ActiveDiscount,
+    type Prisma,
     type DiscountKind,
     type DiscountScopeType,
     type SerializedMoney,
@@ -68,6 +69,19 @@ export interface DiscountRow {
     productCount: number
     createdByEmail: string | null
     createdAt: Date
+}
+
+/** "current" = live + scheduled (what is or will be affecting prices); "ended" = finished or stopped. */
+export type DiscountView = "current" | "ended"
+
+export const DISCOUNT_PAGE_SIZE = 25
+
+export interface DiscountList {
+    rows: DiscountRow[]
+    total: number
+    page: number
+    totalPages: number
+    view: DiscountView
 }
 
 export class DiscountError extends Error {
@@ -168,12 +182,24 @@ function asCandidate(input: DiscountInput, productIds: readonly string[]): Activ
 }
 
 export class DiscountService {
-    static async list(): Promise<DiscountRow[]> {
+    static async list(options: { view?: DiscountView; page?: number } = {}): Promise<DiscountList> {
         await requireCurrentAdmin()
         const now = new Date()
+        const view = options.view ?? "current"
+
+        // statusOf(): live and scheduled are exactly "still active and not yet over".
+        const current = { isActive: true, endsAt: { gt: now } } satisfies Prisma.DiscountWhereInput
+        const where: Prisma.DiscountWhereInput = view === "current" ? current : { NOT: current }
+
+        const total = await prisma.discount.count({ where })
+        const totalPages = Math.max(1, Math.ceil(total / DISCOUNT_PAGE_SIZE))
+        const page = Math.min(Math.max(1, Math.floor(options.page ?? 1) || 1), totalPages)
 
         const rows = await prisma.discount.findMany({
-            orderBy: [{ startsAt: "desc" }],
+            where,
+            orderBy: [{ startsAt: "desc" }, { id: "desc" }],
+            skip: (page - 1) * DISCOUNT_PAGE_SIZE,
+            take: DISCOUNT_PAGE_SIZE,
             include: {
                 category: { select: { translations: { where: { locale: "en" }, take: 1, select: { name: true } } } },
                 subCategory: { select: { translations: { where: { locale: "en" }, take: 1, select: { name: true } } } },
@@ -182,7 +208,7 @@ export class DiscountService {
             },
         })
 
-        return rows.map((row) => ({
+        const mapped = rows.map((row) => ({
             id: row.id,
             name: row.name,
             kind: row.kind,
@@ -205,6 +231,8 @@ export class DiscountService {
             createdByEmail: row.createdByEmail,
             createdAt: row.createdAt,
         }))
+
+        return { rows: mapped, total, page, totalPages, view }
     }
 
     static async preview(input: DiscountInput): Promise<DiscountPreview> {

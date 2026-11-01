@@ -14,8 +14,8 @@ interface Location {
     id: string
     name: string
     isDefault: boolean
-    movements: number
     onHand: number
+    hasMovements: boolean
 }
 
 export function LocationsPanel({ locations }: { locations: Location[] }) {
@@ -54,7 +54,6 @@ export function LocationsPanel({ locations }: { locations: Location[] }) {
                         <TableRow>
                             <TableHead>Location</TableHead>
                             <TableHead className="text-right">On hand</TableHead>
-                            <TableHead className="text-right">Movements</TableHead>
                             <TableHead />
                         </TableRow>
                     </TableHeader>
@@ -83,7 +82,6 @@ export function LocationsPanel({ locations }: { locations: Location[] }) {
                                     <div className="text-xs text-muted-foreground font-mono mt-1">{location.id}</div>
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">{location.onHand}</TableCell>
-                                <TableCell className="text-right tabular-nums">{location.movements}</TableCell>
                                 <TableCell className="text-right whitespace-nowrap">
                                     {renaming?.id !== location.id && (
                                         <Button size="sm" variant="secondary" disabled={pending}
@@ -91,13 +89,13 @@ export function LocationsPanel({ locations }: { locations: Location[] }) {
                                             Rename
                                         </Button>
                                     )}
-                                    {!location.isDefault && (
+                                    {!location.isDefault && !location.hasMovements && (
                                         <Button size="sm" variant="secondary" className="ml-2" disabled={pending}
                                             onClick={() => call(() => setDefaultLocation(location.id))}>
                                             Make default
                                         </Button>
                                     )}
-                                    {!location.isDefault && location.movements === 0 && (
+                                    {!location.isDefault && (
                                         <Button size="sm" variant="ghost" className="ml-2 text-destructive hover:text-destructive"
                                             disabled={pending} onClick={() => call(() => deleteLocation(location.id))}>
                                             Delete

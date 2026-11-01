@@ -348,11 +348,23 @@ export class LocationService {
         await requireCurrentAdmin()
         const locations = await prisma.location.findMany({
             orderBy: [{ isDefault: "desc" }, { name: "asc" }],
-            include: { _count: { select: { movements: true, stockLevels: true } } },
+            include: { _count: { select: { stockLevels: true } } },
         })
-        const totals = await prisma.stockLevel.groupBy({ by: ["locationId"], _sum: { onHand: true } })
+        const [totals, used] = await Promise.all([
+            prisma.stockLevel.groupBy({ by: ["locationId"], _sum: { onHand: true } }),
+            // Only "has any movement?" (it decides whether Delete is offered), not how many:
+            // EXISTS stops at the first row, where a count reads the whole ledger.
+            prisma.$queryRaw<{ id: string }[]>`
+                SELECT l.id FROM locations l
+                WHERE EXISTS (SELECT 1 FROM stock_movements m WHERE m."locationId" = l.id)`,
+        ])
         const byLocation = new Map(totals.map((t) => [t.locationId, t._sum.onHand ?? 0]))
-        return locations.map((location) => ({ ...location, onHand: byLocation.get(location.id) ?? 0 }))
+        const hasMovements = new Set(used.map((row) => row.id))
+        return locations.map((location) => ({
+            ...location,
+            onHand: byLocation.get(location.id) ?? 0,
+            hasMovements: hasMovements.has(location.id),
+        }))
     }
 
     static async create(name: string) {

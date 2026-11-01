@@ -7,11 +7,19 @@ import { DiscountsClient } from "./discounts-client"
 
 export const dynamic = "force-dynamic"
 
-export default async function DiscountsPage() {
+export default async function DiscountsPage({
+    searchParams,
+}: {
+    searchParams: Promise<{ status?: string; page?: string }>
+}) {
     await requireCurrentAdmin()
+    const params = await searchParams
+    const view = params.status === "ended" ? "ended" : "current"
 
+    // The picker below still gets every active product: the catalogue is bounded (~190) and the
+    // "specific products" scope needs the whole list to search client-side.
     const [discounts, categories, subCategories, families, products] = await Promise.all([
-        DiscountService.list(),
+        DiscountService.list({ view, page: Number(params.page ?? 1) || 1 }),
         prisma.category.findMany({
             where: { deletedAt: null },
             select: { id: true, translations: { where: { locale: "en" }, select: { name: true }, take: 1 } },
@@ -54,7 +62,11 @@ export default async function DiscountsPage() {
 
             <PageBody>
                 <DiscountsClient
-                    discounts={discounts}
+                    discounts={discounts.rows}
+                    view={discounts.view}
+                    page={discounts.page}
+                    totalPages={discounts.totalPages}
+                    total={discounts.total}
                     categories={categories.map((category) => ({
                         id: category.id,
                         name: category.translations[0]?.name ?? category.id,

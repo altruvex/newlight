@@ -8,15 +8,22 @@ import { CatalogService } from "@/lib/services/catalog-service"
 import { PageBody, PageHeader, PageStack, Section, Stat, StatGrid, TableFrame } from "@/components/page"
 import { StatusBadge } from "@/components/status-badge"
 import { EmptyState } from "@/components/states"
+import { parseTableState } from "@/lib/table-params"
+import { QueuePager } from "./queue-pager"
 
 export const dynamic = "force-dynamic"
 
-export default async function TranslationsPage() {
+export default async function TranslationsPage({
+    searchParams,
+}: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
     await requireCurrentAdmin()
+    const state = parseTableState(await searchParams)
 
-    const [queue, coverage, quality] = await Promise.all([
-        TranslationService.queue(200),
-        TranslationService.coverage(),
+    // One query feeds both the coverage stats and the queue page.
+    const [{ queue, coverage }, quality] = await Promise.all([
+        TranslationService.overview(state.page, state.pageSize),
         CatalogService.dataQualityQueue(),
     ])
 
@@ -124,6 +131,7 @@ export default async function TranslationsPage() {
                                 </Table>
                             )}
                         </TableFrame>
+                        {queue.total > 0 && <QueuePager total={queue.total} />}
                     </Section>
 
                     <Section
@@ -147,21 +155,20 @@ export default async function TranslationsPage() {
                                 },
                                 {
                                     label: "Boolean specs (N4)",
-                                    value: quality.booleanSpecs.length,
-                                    note: quality.booleanSpecs
-                                        .slice(0, 3)
+                                    value: quality.booleanSpecs.count,
+                                    note: quality.booleanSpecs.sample
                                         .map((s) => `${s.product.productId}/${s.specKey}`)
                                         .join(", "),
                                 },
                                 {
                                     label: "Products with no image",
-                                    value: quality.noImages.length,
-                                    note: quality.noImages.slice(0, 3).map((p) => p.productId).join(", "),
+                                    value: quality.noImages.count,
+                                    note: quality.noImages.sample.map((p) => p.productId).join(", "),
                                 },
                                 {
                                     label: "Products with no colour",
-                                    value: quality.noColors.length,
-                                    note: quality.noColors.slice(0, 3).map((p) => p.productId).join(", "),
+                                    value: quality.noColors.count,
+                                    note: quality.noColors.sample.map((p) => p.productId).join(", "),
                                 },
                             ].map((card) => (
                                 <div key={card.label} className="rounded-lg border bg-card p-3">

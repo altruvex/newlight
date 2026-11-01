@@ -2,7 +2,6 @@ import { notFound } from "next/navigation"
 import { prisma, serializeMoney } from "@repo/database"
 import { requireCurrentAdmin } from "@/lib/auth"
 import { TranslationService } from "@/lib/services/translation-service"
-import { CatalogService } from "@/lib/services/catalog-service"
 import { InventoryService } from "@/lib/services/inventory-service"
 import { SpecService } from "@/lib/services/spec-service"
 import { MediaService } from "@/lib/services/media-service"
@@ -27,12 +26,12 @@ export default async function ProductDetail({
     const { tab } = await searchParams
     const initialTab: Tab = TABS.includes(tab as Tab) ? (tab as Tab) : "translations"
 
+    // Header, rail and tab badges only. Each tab's own data is loaded below only when that tab is
+    // the active one — switching tabs changes ?tab=, which re-renders this page on the server.
     const product = await prisma.product.findUnique({
         where: { id },
         include: {
-            images: { orderBy: { order: "asc" } },
-            availableColors: { include: { color: true }, orderBy: { order: "asc" } },
-            stockLevels: true,
+            stockLevels: { select: { onHand: true, reserved: true } },
             family: { include: { translations: { where: { locale: "en" }, take: 1 } } },
             subCategory: {
                 include: {
@@ -40,20 +39,31 @@ export default async function ProductDetail({
                     category: { include: { translations: { where: { locale: "en" }, take: 1 } } },
                 },
             },
-            slugHistory: { orderBy: { createdAt: "desc" } },
-            _count: { select: { orderItems: true, cartItems: true, configurations: true } },
+            ...(initialTab === "images" && {
+                availableColors: { select: { colorId: true }, orderBy: { order: "asc" } },
+            }),
+            ...(initialTab === "settings" && { slugHistory: { orderBy: { createdAt: "desc" } } }),
+            _count: {
+                select: {
+                    images: true,
+                    orderItems: true,
+                    // Deletion blockers: only the Settings tab's delete control reads these.
+                    cartItems: initialTab === "settings",
+                    configurations: initialTab === "settings",
+                },
+            },
         },
     })
 
     if (!product) notFound()
 
-    const [translations, blockers, movements, priceHistory, specs, media, audit] = await Promise.all([
+    const [translations, movements, priceHistory, specs, media, audit] = await Promise.all([
+        // Always: the Languages tab badge (two rows).
         TranslationService.forProduct(product.id),
-        CatalogService.deletionBlockers(product.id),
-        InventoryService.history(product.id, 50),
-        PricingService.priceHistory(product.id),
-        SpecService.forProduct(product.id),
-        MediaService.forProduct(product.id),
+        initialTab === "inventory" ? InventoryService.history(product.id, 50) : null,
+        initialTab === "price" ? PricingService.priceHistory(product.id) : null,
+        initialTab === "specs" ? SpecService.forProduct(product.id) : null,
+        initialTab === "images" ? MediaService.forProduct(product.id) : null,
         AuditService.forEntity("Product", product.id, 12),
     ])
 
@@ -81,8 +91,16 @@ export default async function ProductDetail({
             onHand={onHand}
             reserved={reserved}
             translations={translations}
-            blockers={blockers}
-            movements={movements.map((m) => ({
+            blockers={
+                initialTab === "settings"
+                    ? {
+                          orderItems: product._count.orderItems,
+                          cartItems: product._count.cartItems,
+                          configurations: product._count.configurations,
+                      }
+                    : null
+            }
+            movements={movements?.map((m) => ({
                 id: m.id,
                 type: m.type,
                 quantity: m.quantity,
@@ -90,10 +108,11 @@ export default async function ProductDetail({
                 unitCost: m.unitCost ? serializeMoney(m.unitCost) : null,
                 actorType: m.actorType,
                 createdAt: m.createdAt.toISOString(),
-            }))}
+            })) ?? null}
             priceHistory={priceHistory}
             specs={specs}
-            images={media.images.map((image) => ({
+            imageCount={product._count.images}
+            images={media?.images.map((image) => ({
                 id: image.id,
                 url: image.url,
                 publicId: image.publicId,
@@ -104,10 +123,10 @@ export default async function ProductDetail({
                 height: image.height,
                 altEn: image.altEn,
                 altAr: image.altAr,
-            }))}
-            colors={media.colors}
-            offeredColorIds={product.availableColors.map((a) => a.colorId)}
-            slugHistory={product.slugHistory.map((h) => h.slug)}
+            })) ?? null}
+            colors={media?.colors ?? null}
+            offeredColorIds={product.availableColors?.map((a) => a.colorId) ?? null}
+            slugHistory={product.slugHistory?.map((h) => h.slug) ?? null}
             categoryPath={categoryPath}
             variantValue={product.variantValue}
             orderLineCount={product._count.orderItems}

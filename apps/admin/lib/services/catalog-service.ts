@@ -5,7 +5,6 @@ import {
     serializeMoney,
     recordMovement,
     DEFAULT_LOCATION_ID,
-    type Locale,
 } from "@repo/database"
 import { requireCurrentAdmin } from "@/lib/auth"
 import { revalidateStorefront } from "@/lib/revalidate"
@@ -216,42 +215,44 @@ export class CatalogService {
         return result
     }
 
-    static async assertSnapshotsIntact(): Promise<Array<{ orderNumber: string; recorded: string; fromItems: string }>> {
-        await requireCurrentAdmin()
-        return prisma.$queryRaw<Array<{ orderNumber: string; recorded: string; fromItems: string }>>`
-            SELECT o."orderNumber",
-                   (o.subtotal)::text     AS recorded,
-                   (SUM(i.price * i.quantity))::text AS "fromItems"
-              FROM orders o
-              JOIN order_items i ON i."orderId" = o.id
-             GROUP BY o.id, o."orderNumber", o.subtotal
-            HAVING o.subtotal <> SUM(i.price * i.quantity)`
-    }
-
-    static async dataQualityQueue(locale: Locale = "en") {
+    static async dataQualityQueue() {
         await requireCurrentAdmin()
 
-        const [missingTranslations, placeholderSpecs, booleanSpecs, noImages, noColors] = await Promise.all([
-            prisma.product.findMany({
-                where: { deletedAt: null, translations: { none: { locale } } },
-                select: { id: true, productId: true },
-                orderBy: { productId: "asc" },
-            }),
+        const noImagesWhere = { deletedAt: null, images: { none: {} } }
+        const noColorsWhere = { deletedAt: null, availableColors: { none: {} } }
+        const booleanSpecsWhere = { valueBool: { not: null } }
+
+        // Counts plus the first three rows: the page shows a number and a short sample, never the full list.
+        const [
+            placeholderSpecs,
+            booleanSpecsCount,
+            booleanSpecsSample,
+            noImagesCount,
+            noImagesSample,
+            noColorsCount,
+            noColorsSample,
+        ] = await Promise.all([
             prisma.productSpec.count({ where: { valueEn: "-" } }),
+            prisma.productSpec.count({ where: booleanSpecsWhere }),
             prisma.productSpec.findMany({
-                where: { valueBool: { not: null } },
+                where: booleanSpecsWhere,
                 select: { specKey: true, product: { select: { productId: true } } },
                 orderBy: [{ productId: "asc" }, { specKey: "asc" }],
+                take: 3,
             }),
+            prisma.product.count({ where: noImagesWhere }),
             prisma.product.findMany({
-                where: { deletedAt: null, images: { none: {} } },
+                where: noImagesWhere,
                 select: { id: true, productId: true },
                 orderBy: { productId: "asc" },
+                take: 3,
             }),
+            prisma.product.count({ where: noColorsWhere }),
             prisma.product.findMany({
-                where: { deletedAt: null, availableColors: { none: {} } },
+                where: noColorsWhere,
                 select: { id: true, productId: true },
                 orderBy: { productId: "asc" },
+                take: 3,
             }),
         ])
 
@@ -271,12 +272,11 @@ export class CatalogService {
             }))
 
         return {
-            missingTranslations,
             taxonomyDefects,
             placeholderSpecs,
-            booleanSpecs,
-            noImages,
-            noColors,
+            booleanSpecs: { count: booleanSpecsCount, sample: booleanSpecsSample },
+            noImages: { count: noImagesCount, sample: noImagesSample },
+            noColors: { count: noColorsCount, sample: noColorsSample },
         }
     }
 }

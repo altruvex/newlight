@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useMemo, useState, useTransition } from "react"
 import { toast } from "sonner"
 
@@ -43,6 +44,10 @@ interface ProductOption {
 
 interface Props {
     discounts: DiscountRow[]
+    view: "current" | "ended"
+    page: number
+    totalPages: number
+    total: number
     categories: Option[]
     subCategories: Array<Option & { categoryId: string }>
     families: Array<Option & { subCategoryId: string }>
@@ -91,8 +96,16 @@ function defaultWindow(): { startsAt: string; endsAt: string } {
     return { startsAt: toLocalInput(start), endsAt: toLocalInput(end) }
 }
 
-export function DiscountsClient({ discounts, categories, subCategories, families, products }: Props) {
+export function DiscountsClient({ discounts, view, page, totalPages, total, categories, subCategories, families, products }: Props) {
     const [creating, setCreating] = useState(false)
+    const ended = view === "ended"
+    const pageHref = (target: number) => {
+        const query = new URLSearchParams()
+        if (ended) query.set("status", "ended")
+        if (target > 1) query.set("page", String(target))
+        const text = query.toString()
+        return `/admin/products/discounts${text ? `?${text}` : ""}`
+    }
 
     if (creating) {
         return (
@@ -111,26 +124,54 @@ export function DiscountsClient({ discounts, categories, subCategories, families
             title="Discounts"
             description="Live and scheduled discounts apply automatically; ended ones are kept because an order placed under a discount has to stay explicable."
             actions={
-                <Button size="sm" className="h-7 text-xs" onClick={() => setCreating(true)}>
-                    New discount
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                        <Link href={ended ? "/admin/products/discounts" : "/admin/products/discounts?status=ended"}>
+                            {ended ? "Show live and scheduled" : "Show ended"}
+                        </Link>
+                    </Button>
+                    <Button size="sm" className="h-7 text-xs" onClick={() => setCreating(true)}>
+                        New discount
+                    </Button>
+                </div>
             }
         >
             {discounts.length === 0 ? (
                 <Panel>
                     <EmptyState
                         variant="no-data"
-                        title="No discounts yet"
-                        description="A discount takes a percentage or an amount off a product, a family, a category or the whole catalogue, for a period you set."
+                        title={ended ? "No ended discounts" : "No live or scheduled discounts"}
+                        description={
+                            ended
+                                ? "Discounts that finish or are stopped will be kept here."
+                                : "A discount takes a percentage or an amount off a product, a family, a category or the whole catalogue, for a period you set."
+                        }
                         action={
-                            <Button size="sm" className="h-7 text-xs" onClick={() => setCreating(true)}>
-                                New discount
-                            </Button>
+                            ended ? undefined : (
+                                <Button size="sm" className="h-7 text-xs" onClick={() => setCreating(true)}>
+                                    New discount
+                                </Button>
+                            )
                         }
                     />
                 </Panel>
             ) : (
-                <DiscountTable discounts={discounts} />
+                <>
+                    <DiscountTable discounts={discounts} />
+                    {totalPages > 1 && (
+                        <nav className="mt-2 flex items-center justify-between" aria-label="Discount pages">
+                            <Button variant="outline" size="sm" disabled={page <= 1} asChild={page > 1}>
+                                {page > 1 ? <Link href={pageHref(page - 1)}>Previous</Link> : <span>Previous</span>}
+                            </Button>
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                Page {page} of {totalPages} · {total} discounts
+                            </span>
+                            <Button variant="outline" size="sm" disabled={page >= totalPages} asChild={page < totalPages}>
+                                {page < totalPages ? <Link href={pageHref(page + 1)}>Next</Link> : <span>Next</span>}
+                            </Button>
+                        </nav>
+                    )}
+                </>
             )}
         </Section>
     )
@@ -360,7 +401,7 @@ function CreateDiscount({
     families,
     products,
     onDone,
-}: Omit<Props, "discounts"> & { onDone: () => void }) {
+}: Pick<Props, "categories" | "subCategories" | "families" | "products"> & { onDone: () => void }) {
     const initialWindow = useMemo(() => defaultWindow(), [])
 
     const [name, setName] = useState("")

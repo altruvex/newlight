@@ -276,12 +276,19 @@ describe("the list", () => {
         )
         await DiscountService.stop(running.id)
 
-        const rows = await DiscountService.list()
-        const byName = new Map(rows.map((row) => [row.name, row]))
+        const current = await DiscountService.list()
+        const ended = await DiscountService.list({ view: "ended" })
+        const byName = new Map([...current.rows, ...ended.rows].map((row) => [row.name, row]))
 
         expect(byName.get("Scheduled one")!.status).toBe("scheduled")
         expect(byName.get("Scheduled one")!.scopeLabel).toBe("nl-test")
         expect(byName.get("Running one")!.status).toBe("stopped")
         expect(byName.get("Running one")!.scopeLabel).toBe("Whole catalogue")
+
+        // The default view is live + scheduled only; stopped and ended ones sit behind "ended".
+        expect(current.rows.map((row) => row.name)).toEqual(["Scheduled one"])
+        expect(ended.rows.map((row) => row.name)).toEqual(["Running one"])
+        expect(current.total).toBe(1)
+        expect(ended.total).toBe(1)
     })
 })

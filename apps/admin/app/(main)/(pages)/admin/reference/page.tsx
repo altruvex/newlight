@@ -88,8 +88,8 @@ export default async function ReferencePage() {
                                 id: l.id,
                                 name: l.name,
                                 isDefault: l.isDefault,
-                                movements: l._count.movements,
                                 onHand: l.onHand,
+                                hasMovements: l.hasMovements,
                             }))}
                         />
                     </TabsContent>

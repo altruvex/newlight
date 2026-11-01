@@ -66,6 +66,8 @@ function buildWhere(state: TableState): Prisma.OrderWhereInput {
         and.push({ status: OrderStatus.shipped, OR: [{ trackingNumber: null }, { trackingNumber: "" }] })
     }
     if (filters.address === "missing") and.push({ shippingAddressId: null })
+    // Exact owner, from a customer record's "View all" link; `q` would also match look-alike emails.
+    if (filters.customer) and.push({ userId: filters.customer })
 
     return and.length > 0 ? { AND: and } : {}
 }

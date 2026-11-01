@@ -29,7 +29,7 @@ export default async function DashboardPage() {
         <>
             <PageHeader
                 title="Overview"
-                description={`Signed in as ${firstName}. Everything below is live — nothing on this screen is cached.`}
+                description={`Signed in as ${firstName}. The tiles refresh every minute; recent orders and activity are live.`}
             />
 
             <PageBody>

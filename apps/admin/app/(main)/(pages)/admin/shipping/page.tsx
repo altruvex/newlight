@@ -20,6 +20,7 @@ export default async function ShippingPage() {
     ])
 
     const awaiting = queue.counts.awaiting_shipment ?? 0
+    const inTransitCount = queue.counts.shipped ?? 0
 
     return (
         <>
@@ -30,8 +31,8 @@ export default async function ShippingPage() {
 
             <PageBody>
                 <PageStack>
-                    {untracked.length > 0 && (
-                        <InlineAlert tone="warning" title={`${untracked.length} shipped without a tracking number`}>
+                    {untracked > 0 && (
+                        <InlineAlert tone="warning" title={`${untracked} shipped without a tracking number`}>
                             Tracking numbers are entered by hand under COD, so a blank one is normal — and still a
                             parcel nobody can answer a question about. They are listed under In transit below.
                         </InlineAlert>
@@ -44,12 +45,12 @@ export default async function ShippingPage() {
                             hint={awaiting > 0 ? "oldest first, below" : "nothing waiting"}
                             tone={awaiting > 0 ? "warning" : "default"}
                         />
-                        <Stat label="In transit" value={queue.counts.shipped ?? 0} />
+                        <Stat label="In transit" value={inTransitCount} />
                         <Stat label="Delivered" value={queue.counts.delivered ?? 0} />
                         <Stat
                             label="Shipped, untracked"
-                            value={untracked.length}
-                            tone={untracked.length > 0 ? "warning" : "default"}
+                            value={untracked}
+                            tone={untracked > 0 ? "warning" : "default"}
                         />
                     </StatGrid>
 
@@ -131,6 +132,16 @@ export default async function ShippingPage() {
                                 </Table>
                             )}
                         </TableFrame>
+                        {awaiting > queue.awaiting.length && (
+                            <p className="mt-2 text-sm">
+                                <Link
+                                    href="/admin/orders?status=awaiting_shipment&sort=createdAt&dir=asc"
+                                    className="text-muted-foreground underline-offset-2 hover:underline"
+                                >
+                                    View all ({awaiting})
+                                </Link>
+                            </p>
+                        )}
                     </Section>
 
                     <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-2">
@@ -183,17 +194,27 @@ export default async function ShippingPage() {
                                     </Table>
                                 )}
                             </TableFrame>
+                            {inTransitCount > queue.inTransit.length && (
+                                <p className="mt-2 text-sm">
+                                    <Link
+                                        href="/admin/orders?status=shipped&sort=createdAt&dir=asc"
+                                        className="text-muted-foreground underline-offset-2 hover:underline"
+                                    >
+                                        View all ({inTransitCount})
+                                    </Link>
+                                </p>
+                            )}
                         </Section>
 
                         <Section
                             title="Destinations"
-                            description="Where orders actually go. Rates are flat today; this is what a per-city rate would be built on."
+                            description="Where orders went in the last 90 days. Rates are flat today; this is what a per-city rate would be built on."
                         >
                             <TableFrame>
                                 {destinations.length === 0 ? (
                                     <EmptyState
                                         variant="no-data"
-                                        title="No orders with an address yet"
+                                        title="No orders with an address in the last 90 days"
                                         description="A destination appears here once an order carrying a shipping address is placed."
                                     />
                                 ) : (

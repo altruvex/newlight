@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation"
-import { prisma, serializeMoney } from "@repo/database"
+import { OrderStatus, prisma, serializeMoney } from "@repo/database"
 
 import { requireCurrentAdmin } from "@/lib/auth"
 import { CustomerRecord } from "./customer-record"
@@ -7,11 +7,15 @@ import { CustomerRecord } from "./customer-record"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
+// The tab shows the latest orders only; the totals are computed by the database, and the
+// full history lives in the orders table (filtered to this customer).
+const RECENT_ORDERS = 20
+
 export default async function CustomerPage({ params }: { params: Promise<{ userId: string }> }) {
     await requireCurrentAdmin()
     const { userId } = await params
 
-    const [user, audit] = await Promise.all([
+    const [user, audit, billable, cancelled] = await Promise.all([
         prisma.user.findUnique({
             where: { id: userId },
             select: {
@@ -27,6 +31,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ userI
                 shippingAddress: true,
                 orders: {
                     orderBy: { createdAt: "desc" },
+                    take: RECENT_ORDERS,
                     select: {
                         id: true,
                         orderNumber: true,
@@ -54,6 +59,12 @@ export default async function CustomerPage({ params }: { params: Promise<{ userI
                 createdAt: true,
             },
         }),
+        prisma.order.aggregate({
+            where: { userId, status: { not: OrderStatus.cancelled } },
+            _count: { _all: true },
+            _sum: { total: true },
+        }),
+        prisma.order.count({ where: { userId, status: OrderStatus.cancelled } }),
     ])
 
     if (!user) notFound()
@@ -83,6 +94,12 @@ export default async function CustomerPage({ params }: { params: Promise<{ userI
                           country: user.shippingAddress.country,
                       }
                     : null,
+                stats: {
+                    spend: serializeMoney(billable._sum.total ?? 0),
+                    orders: billable._count._all,
+                    cancelled,
+                    lastOrder: user.orders[0]?.createdAt.toISOString() ?? null,
+                },
                 orders: user.orders.map((order) => ({
                     id: order.id,
                     orderNumber: order.orderNumber,

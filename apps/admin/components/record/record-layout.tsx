@@ -1,5 +1,6 @@
 "use client"
 
+import { useOptimistic, useTransition } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { formatDistanceToNowStrict } from "date-fns"
@@ -71,17 +72,25 @@ export function RecordLayout({
     const urlTab = searchParams.get("tab")
     const active = tabs.some((tab) => tab.id === urlTab) ? urlTab! : (defaultTab ?? tabs[0]!.id)
 
+    // Tab data loads on the server per tab, so switching is a round-trip: show the new tab at once
+    // and dim the content until its data arrives.
+    const [pending, startTransition] = useTransition()
+    const [shownTab, setShownTab] = useOptimistic(active)
+
     function selectTab(next: string) {
         const params = new URLSearchParams(searchParams.toString())
         params.set("tab", next)
-        router.replace(`?${params.toString()}`, { scroll: false })
+        startTransition(() => {
+            setShownTab(next)
+            router.replace(`?${params.toString()}`, { scroll: false })
+        })
     }
 
     return (
         <div className="flex h-full min-h-0 flex-col">
             {stale && <StaleNotice entity="product" onReload={onReload} />}
 
-            <Tabs value={active} onValueChange={selectTab} className="flex min-h-0 flex-1 flex-col gap-0">
+            <Tabs value={shownTab} onValueChange={selectTab} className="flex min-h-0 flex-1 flex-col gap-0">
                 <header className="shrink-0 border-b px-4 pt-3">
                     <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
                         <div className="min-w-0 flex-1">
@@ -131,7 +140,10 @@ export function RecordLayout({
                 </header>
 
                 <div className="flex min-h-0 flex-1">
-                    <div className="min-w-0 flex-1 overflow-y-auto">
+                    <div
+                        aria-busy={pending}
+                        className={cn("min-w-0 flex-1 overflow-y-auto transition-opacity", pending && "opacity-60")}
+                    >
                         {tabs.map((tab) => (
                             <TabsContent key={tab.id} value={tab.id} className="mt-0 p-4">
                                 {tab.content}

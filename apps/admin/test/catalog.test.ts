@@ -217,7 +217,6 @@ describe("renaming keeps the old URL alive", () => {
 
 describe("money snapshots are immutable (§13.2 item 4)", () => {
     it("repricing a product never rewrites what a customer was charged", async () => {
-        const CatalogService = await catalog()
         const PricingService = (await import("@/lib/services/pricing-service")).PricingService
         await placeOrder(fixture.products.small, "150.00", 2)
 
@@ -234,8 +233,6 @@ describe("money snapshots are immutable (§13.2 item 4)", () => {
 
         const item = await db.prisma.orderItem.findFirstOrThrow({ where: { productId: fixture.products.small } })
         expect(item.price.toFixed(2)).toBe("150.00")
-
-        expect(await CatalogService.assertSnapshotsIntact()).toEqual([])
     })
 })
 

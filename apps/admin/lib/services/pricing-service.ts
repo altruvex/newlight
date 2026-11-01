@@ -270,6 +270,11 @@ export class PricingService {
             select: { productId: true },
         })
 
+        // Every price change — single or bulk — is written by apply() as one `product.bulk_reprice`
+        // row whose diff.changes lists {sku, from, to}. The action filter and the containment test
+        // narrow the rows BEFORE anything is unnested, so only rows that mention this SKU are expanded.
+        // A GIN index on (diff -> 'changes') would make the containment test an index lookup.
+        const mentions = JSON.stringify([{ sku: product.productId }])
         const rows = await prisma.$queryRaw<
             Array<{ createdAt: Date; actorEmail: string | null; from: string; to: string; action: string }>
         >`
@@ -279,6 +284,8 @@ export class PricingService {
               FROM admin_audit_log a,
                    LATERAL jsonb_array_elements(a.diff -> 'changes') AS change
              WHERE a.entity = 'Product'
+               AND a.action = 'product.bulk_reprice'
+               AND a.diff -> 'changes' @> ${mentions}::jsonb
                AND change ->> 'sku' = ${product.productId}
              ORDER BY a."createdAt" DESC
              LIMIT ${limit}`

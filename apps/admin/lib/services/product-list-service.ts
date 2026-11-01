@@ -93,12 +93,36 @@ function buildOrderBy(state: TableState): Prisma.ProductOrderByWithRelationInput
             return [{ price: direction }]
         case "createdAt":
             return [{ createdAt: direction }]
-        case "name":
-            return [{ productId: direction }]
-        case "stock":
         default:
             return [{ createdAt: "desc" }]
     }
+}
+
+const SORT_SQL = {
+    stock: `COALESCE(l."onHand", 0) - COALESCE(l."reserved", 0)`,
+    name: `t.name`,
+} as const
+
+async function sortedPageIds(
+    where: Prisma.ProductWhereInput,
+    sort: keyof typeof SORT_SQL,
+    dir: "asc" | "desc",
+    skip: number,
+    take: number
+): Promise<string[]> {
+    const matching = await prisma.product.findMany({ where, select: { id: true } })
+    if (matching.length === 0) return []
+
+    const order = Prisma.raw(`${SORT_SQL[sort]} ${dir === "asc" ? "ASC" : "DESC"} NULLS LAST, p."productId" ASC`)
+    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT p.id
+          FROM products p
+          LEFT JOIN stock_levels l ON l."productId" = p.id AND l."locationId" = ${LOCATION}
+          LEFT JOIN product_translations t ON t."productId" = p.id AND t.locale = 'en'
+         WHERE p.id = ANY(${matching.map((m) => m.id)}::text[])
+         ORDER BY ${order}
+         LIMIT ${take} OFFSET ${skip}`
+    return rows.map((row) => row.id)
 }
 
 export async function listProducts(state: TableState): Promise<ProductListResult> {
@@ -121,11 +145,14 @@ export async function listProducts(state: TableState): Promise<ProductListResult
 
     const { skip, take } = toPrismaPage(state, total)
 
-    const products = await prisma.product.findMany({
-        where,
-        skip,
-        take,
-        orderBy: buildOrderBy(state),
+    // Stock (available at LOCATION) and English name are not columns Prisma can order by, so
+    // those two sorts order the whole filtered set in SQL and fetch just the page's ids.
+    const sort = state.sort as ProductSortColumn | null
+    const pageIds = sort === "stock" || sort === "name" ? await sortedPageIds(where, sort, state.dir, skip, take) : null
+
+    const fetched = await prisma.product.findMany({
+        where: pageIds ? { id: { in: pageIds } } : where,
+        ...(pageIds ? {} : { skip, take, orderBy: buildOrderBy(state) }),
         select: {
             id: true,
             productId: true,
@@ -150,6 +177,9 @@ export async function listProducts(state: TableState): Promise<ProductListResult
         },
     })
 
+    const byId = new Map(fetched.map((product) => [product.id, product]))
+    const products = pageIds ? pageIds.flatMap((id) => byId.get(id) ?? []) : fetched
+
     const rows: ProductRow[] = products.map((product) => ({
         id: product.id,
         sku: product.productId,
@@ -168,13 +198,6 @@ export async function listProducts(state: TableState): Promise<ProductListResult
         isFeatured: product.isFeatured,
         createdAt: product.createdAt.toISOString(),
     }))
-
-    if (state.sort === "stock") {
-        rows.sort((a, b) => {
-            const delta = a.onHand - a.reserved - (b.onHand - b.reserved)
-            return state.dir === "asc" ? delta : -delta
-        })
-    }
 
     return {
         rows,

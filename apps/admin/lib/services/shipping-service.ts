@@ -113,13 +113,15 @@ export class ShippingService {
         }
     }
 
-    static async destinations(limit = 15) {
+    static async destinations(limit = 15, days = 90) {
         await requireCurrentAdmin()
+        const since = new Date(Date.now() - days * 86_400_000)
         return prisma.$queryRaw<Array<{ city: string; orders: bigint }>>`
             SELECT a.city, count(*) AS orders
               FROM orders o
               JOIN shipping_addresses a ON a.id = o."shippingAddressId"
              WHERE o.status <> 'cancelled'
+               AND o."createdAt" >= ${since}
              GROUP BY a.city
              ORDER BY count(*) DESC
              LIMIT ${limit}`
@@ -127,10 +129,8 @@ export class ShippingService {
 
     static async shippedWithoutTracking() {
         await requireCurrentAdmin()
-        return prisma.order.findMany({
+        return prisma.order.count({
             where: { status: "shipped", OR: [{ trackingNumber: null }, { trackingNumber: "" }] },
-            orderBy: { shippedAt: "asc" },
-            select: { id: true, orderNumber: true, shippedAt: true },
         })
     }
 }

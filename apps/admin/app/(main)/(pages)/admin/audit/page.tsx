@@ -140,7 +140,7 @@ export default async function AuditPage({
                                                     )}
                                                 </TableCell>
                                                 <TableCell className="align-top max-w-md">
-                                                    <AuditDiff diff={row.diff} />
+                                                    <AuditDiff id={row.id} hasDiff={row.hasDiff} diff={row.diff} />
                                                 </TableCell>
                                             </TableRow>
                                         )

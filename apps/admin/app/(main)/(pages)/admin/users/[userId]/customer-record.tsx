@@ -1,9 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo } from "react"
 import type { OrderStatus, PaymentStatus, SerializedMoney, UserRole } from "@repo/database"
-import { OrderStatus as OrderStatusEnum } from "@repo/database"
 
 import { RecordLayout, type AuditEntry } from "@/components/record/record-layout"
 import { MetadataList, Panel, Section, Stat, StatGrid, TableFrame } from "@/components/page"
@@ -12,7 +10,6 @@ import { StatusBadge } from "@/components/status-badge"
 import { EmptyState } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { sumMoney, serializeMoney } from "@repo/database"
 
 export interface CustomerOrder {
     id: string
@@ -39,6 +36,14 @@ export interface CustomerAddress {
     country: string
 }
 
+export interface CustomerStats {
+    /** Lifetime spend, cancelled orders excluded — summed by the database. */
+    spend: SerializedMoney
+    orders: number
+    cancelled: number
+    lastOrder: string | null
+}
+
 export interface Customer {
     id: string
     name: string
@@ -50,19 +55,15 @@ export interface Customer {
     createdAt: string
     updatedAt: string
     address: CustomerAddress | null
+    stats: CustomerStats
+    /** The latest orders only; `stats` carries the totals. */
     orders: CustomerOrder[]
 }
 
 export function CustomerRecord({ customer, audit }: { customer: Customer; audit: AuditEntry[] }) {
-    const lifetime = useMemo(() => {
-        const billable = customer.orders.filter((order) => order.status !== OrderStatusEnum.cancelled)
-        return {
-            spend: serializeMoney(sumMoney(billable.map((order) => order.total))),
-            orders: billable.length,
-            cancelled: customer.orders.length - billable.length,
-            lastOrder: customer.orders[0]?.createdAt ?? null,
-        }
-    }, [customer.orders])
+    const lifetime = customer.stats
+    const totalOrders = lifetime.orders + lifetime.cancelled
+    const ordersHref = `/admin/orders?customer=${encodeURIComponent(customer.id)}`
 
     return (
         <RecordLayout
@@ -91,8 +92,8 @@ export function CustomerRecord({ customer, audit }: { customer: Customer; audit:
                     id: "orders",
                     label: "Orders",
                     badge:
-                        customer.orders.length > 0 ? (
-                            <span className="tabular-nums text-muted-foreground">{customer.orders.length}</span>
+                        totalOrders > 0 ? (
+                            <span className="tabular-nums text-muted-foreground">{totalOrders}</span>
                         ) : undefined,
                     content: (
                         <div className="flex flex-col gap-5">
@@ -132,7 +133,7 @@ export function CustomerRecord({ customer, audit }: { customer: Customer; audit:
                                     />
                                 ) : (
                                     <Table>
-                                        <caption className="sr-only">Every order placed by this customer</caption>
+                                        <caption className="sr-only">The latest orders placed by this customer</caption>
                                         <TableHeader>
                                             <TableRow>
                                                 <TableHead scope="col">Order</TableHead>
@@ -189,6 +190,17 @@ export function CustomerRecord({ customer, audit }: { customer: Customer; audit:
                                     </Table>
                                 )}
                             </TableFrame>
+
+                            {totalOrders > customer.orders.length && (
+                                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                                    <span>
+                                        Showing the latest {customer.orders.length} of {totalOrders} orders.
+                                    </span>
+                                    <Button size="sm" variant="outline" asChild className="h-7 text-xs">
+                                        <Link href={ordersHref}>View all {totalOrders} orders</Link>
+                                    </Button>
+                                </div>
+                            )}
                         </div>
                     ),
                 },

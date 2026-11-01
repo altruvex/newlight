@@ -1,10 +1,50 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useTransition } from "react"
 import { Button } from "@/components/ui/button"
+import { getAuditDiff } from "@/app/action/audit-actions"
 
-export function AuditDiff({ diff }: { diff: unknown }) {
-    const [open, setOpen] = useState(false)
+/**
+ * The list sends a diff only when it is small. A large one (a bulk reprice has an entry per
+ * product) is fetched here, when the admin asks for it.
+ */
+export function AuditDiff({ id, hasDiff, diff }: { id: string; hasDiff: boolean; diff: unknown }) {
+    const [loaded, setLoaded] = useState<{ diff: unknown } | null>(diff == null ? null : { diff })
+    const [error, setError] = useState<string | null>(null)
+    const [pending, start] = useTransition()
+
+    if (!hasDiff) return <span className="text-muted-foreground">—</span>
+
+    if (!loaded) {
+        return (
+            <div className="flex items-center gap-2">
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    className="h-6 px-1.5 text-xs"
+                    onClick={() =>
+                        start(async () => {
+                            const result = await getAuditDiff(id)
+                            if (result.ok) {
+                                setError(null)
+                                setLoaded({ diff: result.diff })
+                            } else setError(result.error)
+                        })
+                    }
+                >
+                    {pending ? "Loading…" : "Show"}
+                </Button>
+                {error && <span className="text-2xs text-danger">{error}</span>}
+            </div>
+        )
+    }
+
+    return <DiffView diff={loaded.diff} defaultOpen={diff == null} />
+}
+
+function DiffView({ diff, defaultOpen }: { diff: unknown; defaultOpen: boolean }) {
+    const [open, setOpen] = useState(defaultOpen)
 
     if (diff === null || diff === undefined) return <span className="text-muted-foreground">—</span>
     if (typeof diff !== "object") return <span className="font-mono text-xs">{String(diff)}</span>

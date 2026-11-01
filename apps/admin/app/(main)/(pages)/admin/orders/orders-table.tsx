@@ -171,6 +171,7 @@ export function OrdersTable({ rows, total, counts, state }: Props) {
         },
     ]
 
+    const customerFilter = state.filters.customer
     const filters: FilterDef[] = useMemo(
         () => [
             {
@@ -205,8 +206,17 @@ export function OrdersTable({ rows, total, counts, state }: Props) {
                 options: [{ value: "missing", label: "No address" }],
                 width: "w-36",
             },
+            // Only reachable from a customer record's "View all" link; shown so it can be cleared.
+            ...(customerFilter
+                ? [{
+                    key: "customer",
+                    label: "Customer",
+                    options: [{ value: customerFilter, label: "This customer only" }],
+                    width: "w-44",
+                }]
+                : []),
         ],
-        [counts]
+        [counts, customerFilter]
     )
 
     const visibleColumns = columns

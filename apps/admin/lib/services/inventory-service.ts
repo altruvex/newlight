@@ -1,7 +1,5 @@
 import {
-    codRefusalRate,
     countLowStock,
-    deadStock,
     DEFAULT_LOCATION_ID,
     grossMargin,
     listLowStock,
@@ -9,8 +7,6 @@ import {
     movementHistory,
     prisma,
     recordMovement,
-    sellThrough,
-    stocktakeVariance,
     stockValuation,
     type StockLevelFilter,
     type StockLevelPage,
@@ -183,21 +179,12 @@ export class InventoryService {
         return movementHistory(prisma, productId, limit)
     }
 
-    static async reports(since: Date) {
+    /** The two figures the inventory page shows. The other reports are not computed here. */
+    static async valuationAndMargin(days: number) {
         await requireCurrentAdmin()
-        const [valuation, variance, sold, dead, margin, refusals] = await Promise.all([
-            stockValuation(prisma),
-            stocktakeVariance(prisma),
-            sellThrough(prisma, since),
-            deadStock(prisma, since),
-            grossMargin(prisma, since),
-            codRefusalRate(prisma, since),
-        ])
-        return { valuation, variance, sold, dead, margin, refusals }
-    }
-
-    static async reportsForLastDays(days: number) {
-        return this.reports(new Date(Date.now() - days * 86_400_000))
+        const since = new Date(Date.now() - days * 86_400_000)
+        const [valuation, margin] = await Promise.all([stockValuation(prisma), grossMargin(prisma, since)])
+        return { valuation, margin }
     }
 
     static async completeOpeningStocktake() {

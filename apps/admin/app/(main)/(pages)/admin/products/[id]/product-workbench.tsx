@@ -42,6 +42,8 @@ interface Movement {
     createdAt: string
 }
 
+type PriceChange = { createdAt: Date; actorEmail: string | null; from: string; to: string; action: string }
+
 interface Props {
     initialTab: "translations" | "images" | "inventory" | "price" | "specs" | "settings"
     productId: string
@@ -54,14 +56,16 @@ interface Props {
     onHand: number
     reserved: number
     translations: TranslationPair
-    blockers: DeletionBlockers
-    movements: Movement[]
-    priceHistory: Array<{ createdAt: Date; actorEmail: string | null; from: string; to: string; action: string }>
-    specs: SpecRow[]
-    slugHistory: string[]
-    images: ImageRow[]
-    colors: ColorOption[]
-    offeredColorIds: string[]
+    imageCount: number
+    // Tab data: null unless that tab is the active one — the server loads only the active tab.
+    blockers: DeletionBlockers | null
+    movements: Movement[] | null
+    priceHistory: PriceChange[] | null
+    specs: SpecRow[] | null
+    slugHistory: string[] | null
+    images: ImageRow[] | null
+    colors: ColorOption[] | null
+    offeredColorIds: string[] | null
 
     categoryPath: string
     variantValue: string | null
@@ -82,13 +86,16 @@ function useAction() {
     return { pending, call }
 }
 
+function TabLoading() {
+    return <p className="text-sm text-muted-foreground">Loading…</p>
+}
+
 function AttentionDot({ label }: { label: string }) {
     return <span role="img" aria-label={label} className="size-1.5 rounded-full bg-warning" />
 }
 
 export function ProductWorkbench(props: Props) {
     const { pending, call } = useAction()
-    const blockerTotal = props.blockers.orderItems + props.blockers.cartItems + props.blockers.configurations
 
     const translationsIncomplete = (["en", "ar"] as const).some(
         (locale) => props.translations.completeness[locale].missing.length > 0
@@ -151,7 +158,7 @@ export function ProductWorkbench(props: Props) {
                         </div>
                         <div className="flex items-baseline justify-between gap-2">
                             <dt className="text-muted-foreground">Photographs</dt>
-                            <dd className="tabular-nums">{props.images.length}</dd>
+                            <dd className="tabular-nums">{props.imageCount}</dd>
                         </div>
                     </dl>
                 ),
@@ -173,38 +180,62 @@ export function ProductWorkbench(props: Props) {
                 {
                     id: "images",
                     label: "Photos",
-                    badge: props.images.length === 0 ? <AttentionDot label="No photographs" /> : undefined,
-                    content: (
-                        <ImagesPanel
-                            productId={props.productId}
-                            sku={props.sku}
-                            images={props.images}
-                            colors={props.colors}
-                            offeredColorIds={props.offeredColorIds}
-                        />
-                    ),
+                    badge: props.imageCount === 0 ? <AttentionDot label="No photographs" /> : undefined,
+                    content:
+                        props.images && props.colors && props.offeredColorIds ? (
+                            <ImagesPanel
+                                productId={props.productId}
+                                sku={props.sku}
+                                images={props.images}
+                                colors={props.colors}
+                                offeredColorIds={props.offeredColorIds}
+                            />
+                        ) : (
+                            <TabLoading />
+                        ),
                 },
                 {
                     id: "inventory",
                     label: "Inventory",
-                    content: <InventoryPanel {...props} pending={pending} call={call} />,
+                    content: props.movements ? (
+                        <InventoryPanel {...props} movements={props.movements} pending={pending} call={call} />
+                    ) : (
+                        <TabLoading />
+                    ),
                 },
                 {
                     id: "price",
                     label: "Pricing",
-                    content: <PricePanel {...props} pending={pending} call={call} />,
+                    content: props.priceHistory ? (
+                        <PricePanel {...props} priceHistory={props.priceHistory} pending={pending} call={call} />
+                    ) : (
+                        <TabLoading />
+                    ),
                 },
                 {
                     id: "specs",
                     label: "Specifications",
-                    content: (
+                    content: props.specs ? (
                         <SpecsPanel productId={props.productId} specs={props.specs} pending={pending} call={call} />
+                    ) : (
+                        <TabLoading />
                     ),
                 },
                 {
                     id: "settings",
                     label: "Settings",
-                    content: <SettingsPanel {...props} blockerTotal={blockerTotal} pending={pending} call={call} />,
+                    content:
+                        props.blockers && props.slugHistory ? (
+                            <SettingsPanel
+                                {...props}
+                                blockers={props.blockers}
+                                slugHistory={props.slugHistory}
+                                pending={pending}
+                                call={call}
+                            />
+                        ) : (
+                            <TabLoading />
+                        ),
                 },
             ]}
         />
@@ -286,7 +317,7 @@ function InventoryPanel({
     movements,
     pending,
     call,
-}: Props & { pending: boolean; call: (fn: () => Promise<ActionResult>) => void }) {
+}: Props & { movements: Movement[]; pending: boolean; call: (fn: () => Promise<ActionResult>) => void }) {
     const [adjustQty, setAdjustQty] = useState("")
     const [adjustReason, setAdjustReason] = useState("")
     const [damageQty, setDamageQty] = useState("")
@@ -462,7 +493,7 @@ function PricePanel({
     priceHistory,
     pending,
     call,
-}: Props & { pending: boolean; call: (fn: () => Promise<ActionResult>) => void }) {
+}: Props & { priceHistory: PriceChange[]; pending: boolean; call: (fn: () => Promise<ActionResult>) => void }) {
     const [next, setNext] = useState(price)
     const margin =
         averageCost && Number(averageCost) > 0
@@ -699,12 +730,17 @@ function SettingsPanel({
     isActive,
     isArchived,
     blockers,
-    blockerTotal,
     slugHistory,
     pending,
     call,
-}: Props & { blockerTotal: number; pending: boolean; call: (fn: () => Promise<ActionResult>) => void }) {
+}: Props & {
+    blockers: DeletionBlockers
+    slugHistory: string[]
+    pending: boolean
+    call: (fn: () => Promise<ActionResult>) => void
+}) {
     const [nextSlug, setNextSlug] = useState(slug)
+    const blockerTotal = blockers.orderItems + blockers.cartItems + blockers.configurations
 
     return (
         <div className="space-y-8 max-w-3xl">
