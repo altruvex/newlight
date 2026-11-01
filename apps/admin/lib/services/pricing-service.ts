@@ -51,6 +51,44 @@ export class PricingError extends Error {
     }
 }
 
+const DECIMAL = /^-?\d+(\.\d+)?$/
+const PERCENT_MIN = -99
+const PERCENT_MAX = 1000
+
+function requireDecimal(value: unknown, what: string): string {
+    if (typeof value !== "string" || !DECIMAL.test(value.trim())) {
+        throw new PricingError(`${what} must be a number such as 12.50.`)
+    }
+    return value.trim()
+}
+
+// The formula comes straight from the form, so the strings are checked before Decimal sees them:
+// money("abc") would throw a Decimal error, and NaN would pass right through `times`.
+function validateFormula(formula: PricingFormula): PricingFormula {
+    switch (formula.kind) {
+        case "percent": {
+            const percent = requireDecimal(formula.percent, "The percentage")
+            const value = Number(percent)
+            if (!Number.isFinite(value) || value < PERCENT_MIN || value > PERCENT_MAX) {
+                throw new PricingError(`The percentage must be between ${PERCENT_MIN}% and ${PERCENT_MAX}%.`)
+            }
+            return { kind: "percent", percent }
+        }
+        case "fixed":
+            return { kind: "fixed", amount: requireDecimal(formula.amount, "The amount") }
+        case "set":
+            return { kind: "set", amount: requireDecimal(formula.amount, "The price") }
+        case "linear":
+            return {
+                kind: "linear",
+                multiplier: requireDecimal(formula.multiplier, "The multiplier"),
+                addend: requireDecimal(formula.addend, "The addend"),
+            }
+        default:
+            throw new PricingError("That pricing formula is not recognised.")
+    }
+}
+
 function whereFor(scope: PricingScope) {
     const live = { deletedAt: null } as const
     switch (scope.kind) {
@@ -97,8 +135,9 @@ function mintToken(scope: PricingScope, formula: PricingFormula, rows: PreviewRo
 }
 
 export class PricingService {
-    static async preview(scope: PricingScope, formula: PricingFormula): Promise<PricingPreview> {
+    static async preview(scope: PricingScope, input: PricingFormula): Promise<PricingPreview> {
         await requireCurrentAdmin()
+        const formula = validateFormula(input)
 
         const products = await prisma.product.findMany({
             where: whereFor(scope),
@@ -156,12 +195,33 @@ export class PricingService {
             )
         }
 
-        await prisma.$transaction(async (tx) => {
-            for (const row of preview.rows) {
-                await tx.product.update({ where: { id: row.productId }, data: { price: row.newPrice } })
-            }
+        // One updateMany per distinct (old, new) pair instead of one update per product: a category
+        // of a few hundred products is a handful of statements. `price: oldPrice` in the where is the
+        // optimistic guard — a row repriced since the preview is not matched, the count comes up
+        // short, and the whole transaction rolls back rather than applying a stale formula.
+        const groups = new Map<string, { oldPrice: SerializedMoney; newPrice: SerializedMoney; ids: string[] }>()
+        for (const row of preview.rows) {
+            const key = `${row.oldPrice}->${row.newPrice}`
+            const group = groups.get(key) ?? { oldPrice: row.oldPrice, newPrice: row.newPrice, ids: [] }
+            group.ids.push(row.productId)
+            groups.set(key, group)
+        }
 
-            await tx.adminAuditLog.create({
+        await prisma.$transaction(
+            async (tx) => {
+                for (const group of groups.values()) {
+                    const { count } = await tx.product.updateMany({
+                        where: { id: { in: group.ids }, price: group.oldPrice, deletedAt: null },
+                        data: { price: group.newPrice },
+                    })
+                    if (count !== group.ids.length) {
+                        throw new PricingError(
+                            "the catalog changed since this preview was generated. Review the new prices and apply again."
+                        )
+                    }
+                }
+
+                await tx.adminAuditLog.create({
                 data: {
                     actorType: "ADMIN",
                     actorId: admin.id,
@@ -179,7 +239,9 @@ export class PricingService {
                     },
                 },
             })
-        })
+            },
+            { timeout: 30_000 }
+        )
 
         await revalidateStorefront({ kind: "all" })
 

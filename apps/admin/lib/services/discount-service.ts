@@ -302,7 +302,9 @@ export class DiscountService {
                         ? {
                               products: {
                                   createMany: {
-                                      data: (scope.productIds ?? []).map((productId) => ({ productId })),
+                                      // preview.rows is the scope after whereForScope — archived and
+                                      // inactive products are left out, however they were selected.
+                                      data: preview.rows.map((row) => ({ productId: row.productId })),
                                   },
                               },
                           }

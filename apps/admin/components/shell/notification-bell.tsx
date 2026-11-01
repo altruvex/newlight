@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useSyncExternalStore } from "react"
 import { formatDistanceToNowStrict } from "date-fns"
 import {
     AlertTriangle,
@@ -18,7 +18,7 @@ import {
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useNotifications, type AdminNotification } from "@/hooks/use-notifications"
-import { playChime, setSoundEnabled, soundEnabled } from "@/lib/chime"
+import { playChime, setSoundEnabled, soundEnabled, subscribeSound } from "@/lib/chime"
 import { currentPushStatus, disablePush, enablePush, type PushState } from "@/lib/push-client"
 import { cn } from "@/lib/utils"
 import type { NotificationType } from "@/types"
@@ -177,10 +177,9 @@ function NotificationRow({ notification, onOpen }: { notification: AdminNotifica
 function ChannelControls() {
     const [push, setPush] = useState<{ state: PushState; reason?: string }>({ state: "off" })
     const [busy, setBusy] = useState(false)
-    const [sound, setSound] = useState(false)
+    const sound = useSyncExternalStore(subscribeSound, soundEnabled, () => false)
 
     useEffect(() => {
-        setSound(soundEnabled())
         void currentPushStatus().then(setPush)
     }, [])
 
@@ -222,7 +221,6 @@ function ChannelControls() {
                 onClick={() => {
                     const next = !sound
                     setSoundEnabled(next)
-                    setSound(next)
                     if (next) playChime()
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-2xs transition-colors duration-(--duration-fast) hover:bg-accent"

@@ -7,6 +7,7 @@ import {
     type SpecDefinitionInput,
 } from "@/lib/services/spec-definition-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { ActionResult } from "@/app/action/catalog-actions"
 
 async function run(fn: () => Promise<string>): Promise<ActionResult> {
@@ -18,8 +19,8 @@ async function run(fn: () => Promise<string>): Promise<ActionResult> {
         if (error instanceof UnauthenticatedError) return { ok: false, error: "You are signed out. Sign in again." }
         if (error instanceof ForbiddenError) return { ok: false, error: "Your role does not allow this." }
         if (error instanceof SpecDefinitionError) return { ok: false, error: error.message }
-        console.error("[spec-action]", error)
-        return { ok: false, error: error instanceof Error ? error.message : "Something went wrong." }
+        logger.error({ err: error }, "spec action failed")
+        return { ok: false, error: "Something went wrong. Try again, and tell an administrator if it keeps happening." }
     }
 }
 

@@ -3,14 +3,15 @@
 import { revalidatePath } from "next/cache"
 import { ColorService, FamilyService, LocationService, ReferenceError_ } from "@/lib/services/reference-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { ActionResult } from "@/app/action/catalog-actions"
 
 function describe(error: unknown): string {
     if (error instanceof UnauthenticatedError) return "You are signed out. Sign in again."
     if (error instanceof ForbiddenError) return "Your role does not allow this."
     if (error instanceof ReferenceError_) return error.message
-    console.error("[reference-action]", error)
-    return error instanceof Error ? error.message : "Something went wrong."
+    logger.error({ err: error }, "reference action failed")
+    return "Something went wrong. Try again, and tell an administrator if it keeps happening."
 }
 
 async function run(fn: () => Promise<string>): Promise<ActionResult> {

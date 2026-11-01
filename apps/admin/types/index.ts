@@ -32,8 +32,7 @@ export type OrderWithCustomer = Prisma.OrderGetPayload<{
 export type DashboardStats = {
     orders: number
     shipping: number
-    notifications: number
-    reviews: number
+    lowStock: number
     products: number
     customers: number
     contacts: number

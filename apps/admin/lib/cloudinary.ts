@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { logger } from "@/lib/logger"
 
 // The raw Cloudinary signing/upload/destroy primitives. Product photos (media-service.ts) and
 // taxonomy photos (taxonomy-service.ts's category/sub-category image) both go through this —
@@ -69,7 +70,10 @@ export async function uploadImageToCloudinary(file: File, publicId: string): Pro
         body: form,
     })
     if (!response.ok) {
-        throw new MediaError(`Cloudinary refused the upload (${response.status}): ${await response.text()}`)
+        // The response body names the cloud, the public id and sometimes the signature input —
+        // it belongs in the log, not in a toast.
+        logger.error({ status: response.status, publicId, body: await response.text() }, "cloudinary refused an upload")
+        throw new MediaError(`Cloudinary refused the upload (${response.status}). Try again, and tell an administrator if it keeps happening.`)
     }
     return response.json() as Promise<CloudinaryUploadResult>
 }

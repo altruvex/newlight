@@ -3,14 +3,15 @@
 import { revalidatePath } from "next/cache"
 import { MediaService, MediaError } from "@/lib/services/media-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { ActionResult } from "@/app/action/catalog-actions"
 
 function describe(error: unknown): string {
     if (error instanceof UnauthenticatedError) return "You are signed out. Sign in again."
     if (error instanceof ForbiddenError) return "Your role does not allow this."
     if (error instanceof MediaError) return error.message
-    console.error("[media-action]", error)
-    return error instanceof Error ? error.message : "Something went wrong."
+    logger.error({ err: error }, "media action failed")
+    return "Something went wrong. Try again, and tell an administrator if it keeps happening."
 }
 
 export async function uploadProductImage(formData: FormData): Promise<ActionResult> {

@@ -180,6 +180,21 @@ describe("creating", () => {
         )
     })
 
+    it("links only live, active products even when an archived one was selected", async () => {
+        const DiscountService = await service()
+        await db.prisma.product.update({ where: { id: fixture.products.large }, data: { deletedAt: new Date(), isActive: false } })
+
+        const { id, count } = await DiscountService.create(
+            input({
+                scope: { type: "PRODUCTS", productIds: [fixture.products.large, fixture.products.small] },
+            })
+        )
+        expect(count).toBe(1)
+
+        const links = await db.prisma.discountProduct.findMany({ where: { discountId: id } })
+        expect(links.map((link) => link.productId)).toEqual([fixture.products.small])
+    })
+
     it("writes an audit row carrying the actor, the scope and the window", async () => {
         const DiscountService = await service()
         await DiscountService.create(input())

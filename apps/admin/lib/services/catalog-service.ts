@@ -24,6 +24,10 @@ export class CatalogError extends Error {
     }
 }
 
+function isRecordNotFound(error: unknown): boolean {
+    return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "P2025"
+}
+
 export class CatalogService {
     static async deletionBlockers(productId: string): Promise<DeletionBlockers> {
         await requireCurrentAdmin()
@@ -88,6 +92,38 @@ export class CatalogService {
                     entity: "Product",
                     entityId: productId,
                     diff: { sku: updated.productId },
+                },
+            })
+            return updated
+        })
+        await revalidateStorefront({ kind: "all" })
+        return product
+    }
+
+    static async setActive(productId: string, isActive: boolean) {
+        const admin = await requireCurrentAdmin()
+        const product = await prisma.$transaction(async (tx) => {
+            // deletedAt: null in the where keeps an archived product from being switched on through
+            // the toggle; Prisma reports the miss as P2025, which reads as "not found" to the admin.
+            const updated = await tx.product
+                .update({
+                    where: { id: productId, deletedAt: null },
+                    data: { isActive },
+                    select: { id: true, productId: true },
+                })
+                .catch((error: unknown) => {
+                    if (isRecordNotFound(error)) throw new CatalogError("That product is archived or no longer exists.")
+                    throw error
+                })
+            await tx.adminAuditLog.create({
+                data: {
+                    actorType: "ADMIN",
+                    actorId: admin.id,
+                    actorEmail: admin.email,
+                    action: isActive ? "product.activate" : "product.deactivate",
+                    entity: "Product",
+                    entityId: productId,
+                    diff: { sku: updated.productId, isActive },
                 },
             })
             return updated

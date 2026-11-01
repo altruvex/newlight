@@ -10,6 +10,7 @@ import {
     type DiscountScopeInput,
 } from "@/lib/services/discount-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { DiscountKind } from "@repo/database"
 
 export interface DiscountFormInput {
@@ -28,8 +29,8 @@ function describe(error: unknown): string {
     if (error instanceof UnauthenticatedError) return "You are signed out. Sign in again."
     if (error instanceof ForbiddenError) return "Your role does not allow this."
     if (error instanceof DiscountError) return error.message
-    console.error("[discount-action]", error)
-    return error instanceof Error ? error.message : "Something went wrong."
+    logger.error({ err: error }, "discount action failed")
+    return "Something went wrong. Try again, and tell an administrator if it keeps happening."
 }
 
 function toInput(form: DiscountFormInput): DiscountInput {

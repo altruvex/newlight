@@ -9,6 +9,7 @@ import {
     type PricingScope,
 } from "@/lib/services/pricing-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 
 export type PreviewResult = { ok: true; preview: PricingPreview } | { ok: false; error: string }
 export type ApplyResult = { ok: true; message: string } | { ok: false; error: string }
@@ -17,8 +18,8 @@ function describe(error: unknown): string {
     if (error instanceof UnauthenticatedError) return "You are signed out. Sign in again."
     if (error instanceof ForbiddenError) return "Your role does not allow this."
     if (error instanceof PricingError) return error.message
-    console.error("[pricing-action]", error)
-    return error instanceof Error ? error.message : "Something went wrong."
+    logger.error({ err: error }, "pricing action failed")
+    return "Something went wrong. Try again, and tell an administrator if it keeps happening."
 }
 
 export async function previewPricing(scope: PricingScope, formula: PricingFormula): Promise<PreviewResult> {

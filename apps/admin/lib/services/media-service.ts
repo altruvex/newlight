@@ -1,5 +1,6 @@
 import { prisma } from "@repo/database"
 import { requireCurrentAdmin } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import { revalidateStorefront } from "@/lib/revalidate"
 import { assertValidImage, destroyCloudinaryAsset, uploadImageToCloudinary, MediaError } from "@/lib/cloudinary"
 
@@ -8,6 +9,17 @@ export { MediaError }
 function publicIdFor(parts: { categorySlug: string; subCategorySlug: string; sku: string; index: number }): string {
     const clean = (value: string) => value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "")
     return `products/${clean(parts.categorySlug)}/${clean(parts.subCategorySlug)}/${clean(parts.sku)}-${parts.index}`
+}
+
+// An image's colour is one of the product's own offered colours, or none. Checked before the
+// Cloudinary upload so a bad colour does not leave an orphaned asset behind.
+async function assertColorOffered(productId: string, colorId: string | null): Promise<void> {
+    if (colorId === null) return
+    const offered = await prisma.productAvailableColor.findUnique({
+        where: { productId_colorId: { productId, colorId } },
+        select: { colorId: true },
+    })
+    if (!offered) throw new MediaError("That colour is not offered on this product. Add it to the product's colours first.")
 }
 
 export class MediaService {
@@ -42,6 +54,8 @@ export class MediaService {
                 images: { select: { order: true }, orderBy: { order: "desc" }, take: 1 },
             },
         })
+
+        await assertColorOffered(productId, colorId)
 
         const nextOrder = (product.images[0]?.order ?? -1) + 1
         const publicId = publicIdFor({
@@ -120,6 +134,9 @@ export class MediaService {
 
     static async setColor(imageId: string, colorId: string | null) {
         const admin = await requireCurrentAdmin()
+        const owner = await prisma.productImage.findUnique({ where: { id: imageId }, select: { productId: true } })
+        if (!owner) throw new MediaError("That image no longer exists. Reload and try again.")
+        await assertColorOffered(owner.productId, colorId)
         const image = await prisma.$transaction(async (tx) => {
             const updated = await tx.productImage.update({
                 where: { id: imageId },
@@ -194,7 +211,7 @@ export class MediaService {
             try {
                 await destroyCloudinaryAsset(image.publicId)
             } catch (error) {
-                console.error(`[media] the row is gone but Cloudinary still holds ${image.publicId}:`, error)
+                logger.error({ err: error, publicId: image.publicId }, "the row is gone but Cloudinary still holds the asset")
             }
         }
 

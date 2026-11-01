@@ -24,7 +24,8 @@ interface NotificationsResponse {
 
 const KEY = ["admin", "notifications"] as const
 
-export function useNotifications(pollMs = 15_000) {
+// Web Push delivers the real-time alert; the poll is only the fallback that keeps the list honest.
+export function useNotifications(pollMs = 60_000) {
     const queryClient = useQueryClient()
 
     const query = useQuery({

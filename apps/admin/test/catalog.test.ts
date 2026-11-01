@@ -110,6 +110,30 @@ describe("soft delete is the default", () => {
     })
 })
 
+describe("activation goes through the service", () => {
+    it("flips the flag, writes an audit row, and refuses an archived product", async () => {
+        const CatalogService = await catalog()
+
+        await CatalogService.setActive(fixture.products.small, false)
+        const hidden = await db.prisma.product.findUniqueOrThrow({
+            where: { id: fixture.products.small },
+            select: { isActive: true },
+        })
+        expect(hidden.isActive).toBe(false)
+
+        await CatalogService.softDelete(fixture.products.single)
+        await expect(CatalogService.setActive(fixture.products.single, true)).rejects.toThrow(/archived or no longer exists/)
+        const archived = await db.prisma.product.findUniqueOrThrow({
+            where: { id: fixture.products.single },
+            select: { isActive: true },
+        })
+        expect(archived.isActive).toBe(false)
+
+        const actions = await db.prisma.adminAuditLog.findMany({ select: { action: true }, orderBy: { createdAt: "asc" } })
+        expect(actions.map((a) => a.action)).toEqual(["product.deactivate", "product.soft_delete"])
+    })
+})
+
 describe("hard delete refuses while anything still refers to the product", () => {
     it("refuses when an order line refers to it, and names the blocker", async () => {
         const CatalogService = await catalog()

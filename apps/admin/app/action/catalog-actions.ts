@@ -4,8 +4,11 @@ import { revalidatePath } from "next/cache"
 import type { Locale } from "@repo/database"
 import { CatalogService, CatalogError } from "@/lib/services/catalog-service"
 import { TranslationService, type TranslationFields } from "@/lib/services/translation-service"
-import { InventoryService } from "@/lib/services/inventory-service"
+import { InventoryService, InventoryError } from "@/lib/services/inventory-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
+
+const GENERIC_ERROR = "Something went wrong. Try again, and tell an administrator if it keeps happening."
 
 export type ActionResult = { ok: true; message?: string } | { ok: false; error: string }
 
@@ -16,9 +19,9 @@ async function run(fn: () => Promise<string | void>): Promise<ActionResult> {
     } catch (error) {
         if (error instanceof UnauthenticatedError) return { ok: false, error: "You are signed out. Sign in again." }
         if (error instanceof ForbiddenError) return { ok: false, error: "Your role does not allow this." }
-        if (error instanceof CatalogError) return { ok: false, error: error.message }
-        console.error("[catalog-action]", error)
-        return { ok: false, error: error instanceof Error ? error.message : "Something went wrong." }
+        if (error instanceof CatalogError || error instanceof InventoryError) return { ok: false, error: error.message }
+        logger.error({ err: error }, "catalog action failed")
+        return { ok: false, error: GENERIC_ERROR }
     }
 }
 
@@ -61,12 +64,8 @@ export async function restoreProduct(productId: string): Promise<ActionResult> {
 
 export async function setProductActive(productId: string, isActive: boolean): Promise<ActionResult> {
     return run(async () => {
-        const { prisma } = await import("@repo/database")
-        const { requireCurrentAdmin } = await import("@/lib/auth")
-        await requireCurrentAdmin()
-        await prisma.product.update({ where: { id: productId }, data: { isActive } })
-        const { revalidateStorefront } = await import("@/lib/revalidate")
-        await revalidateStorefront({ kind: "all" })
+        await CatalogService.setActive(productId, isActive)
+        revalidatePath("/admin/products")
         revalidatePath(`/admin/products/${productId}`)
         return isActive ? "Visible on the storefront." : "Hidden from the storefront."
     })
@@ -82,7 +81,7 @@ export async function hardDeleteProduct(productId: string): Promise<ActionResult
 
 export async function adjustStock(productId: string, quantity: number, reason: string): Promise<ActionResult> {
     return run(async () => {
-        if (!Number.isInteger(quantity) || quantity === 0) throw new Error("Enter a whole number that is not zero.")
+        if (!Number.isInteger(quantity) || quantity === 0) throw new CatalogError("Enter a whole number that is not zero.")
         await InventoryService.adjust({ productId, quantity, reason })
         revalidatePath(`/admin/products/${productId}`)
         return `Ledger entry written: ${quantity > 0 ? "+" : ""}${quantity}.`
@@ -91,7 +90,7 @@ export async function adjustStock(productId: string, quantity: number, reason: s
 
 export async function recordDamage(productId: string, quantity: number, reason: string): Promise<ActionResult> {
     return run(async () => {
-        if (!Number.isInteger(quantity) || quantity <= 0) throw new Error("Enter how many units were lost.")
+        if (!Number.isInteger(quantity) || quantity <= 0) throw new CatalogError("Enter how many units were lost.")
         await InventoryService.recordDamage({ productId, quantity, reason })
         revalidatePath(`/admin/products/${productId}`)
         return `Damage recorded: −${quantity}.`
@@ -133,12 +132,14 @@ export async function bulkReceiveStock(
                 })
                 received += 1
             } catch (error) {
-                failures.push(`${row.productId}: ${error instanceof Error ? error.message : "failed"}`)
+                // Only a domain error has a message meant for the admin; anything else is logged.
+                if (!(error instanceof InventoryError)) logger.error({ err: error, productId: row.productId }, "bulk receipt row failed")
+                failures.push(`${row.productId}: ${error instanceof InventoryError ? error.message : "failed"}`)
             }
         }
 
         if (failures.length > 0) {
-            throw new Error(`${received} received, ${failures.length} failed — ${failures.slice(0, 3).join("; ")}`)
+            throw new CatalogError(`${received} received, ${failures.length} failed — ${failures.slice(0, 3).join("; ")}`)
         }
         return `${received} receipt(s) recorded.`
     })
@@ -187,7 +188,7 @@ export async function createProductAction(
         if (error instanceof UnauthenticatedError) return { ok: false, error: "You are signed out. Sign in again." }
         if (error instanceof ForbiddenError) return { ok: false, error: "Your role does not allow this." }
         if (error instanceof CatalogCreationError) return { ok: false, error: error.message }
-        console.error("[catalog-action] create", error)
-        return { ok: false, error: error instanceof Error ? error.message : "Something went wrong." }
+        logger.error({ err: error }, "product creation failed")
+        return { ok: false, error: GENERIC_ERROR }
     }
 }

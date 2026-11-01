@@ -181,3 +181,69 @@ describe("the audit row is the price history (§3)", () => {
         expect(await db.prisma.adminAuditLog.count()).toBe(0)
     })
 })
+
+describe("applying a reprice to a large scope", () => {
+    it("reprices three hundred products with a handful of statements and keeps Decimal precision", async () => {
+        const PricingService = await service()
+        await db.prisma.product.createMany({
+            data: Array.from({ length: 300 }, (_, i) => ({
+                productId: `nl-bulk-${i}`,
+                slug: `nl-bulk-${i}`,
+                subCategoryId: fixture.subCategoryId,
+                // Three distinct prices so the grouping has more than one batch to run.
+                price: ["10.00", "99.99", "1234.56"][i % 3]!,
+                colorTemperatures: ["WARM_3000K"],
+            })),
+        })
+
+        const scope = { kind: "subCategory", subCategoryId: fixture.subCategoryId } as const
+        const formula = { kind: "percent", percent: "12.5" } as const
+        const preview = await PricingService.preview(scope, formula)
+        expect(preview.count).toBe(303)
+
+        const result = await PricingService.apply(scope, formula, preview.token)
+        expect(result.count).toBe(303)
+
+        const bulk = await db.prisma.product.findMany({
+            where: { productId: { startsWith: "nl-bulk-" } },
+            select: { price: true },
+        })
+        const prices = new Set(bulk.map((p) => p.price.toFixed(2)))
+        expect(prices).toEqual(new Set(["11.25", "112.49", "1388.88"]))
+    })
+
+    it("rolls the whole batch back when one product was repriced after the preview", async () => {
+        const PricingService = await service()
+        const scope = { kind: "subCategory", subCategoryId: fixture.subCategoryId } as const
+        const formula = { kind: "percent", percent: "10" } as const
+        const preview = await PricingService.preview(scope, formula)
+
+        // Same token, but one row's price no longer matches: the guard in the where clause catches
+        // what the token cannot (the token is recomputed from the catalog, so bypass it here).
+        const spy = vi.spyOn(PricingService, "preview").mockResolvedValueOnce(preview)
+        await db.prisma.product.update({ where: { id: fixture.products.small }, data: { price: "175.00" } })
+        await expect(PricingService.apply(scope, formula, preview.token)).rejects.toThrow(/changed since this preview/)
+        spy.mockRestore()
+
+        const products = await db.prisma.product.findMany({ orderBy: { productId: "asc" } })
+        expect(products.map((p) => p.price.toFixed(2))).toEqual(["1000.00", "199.50", "175.00"])
+    })
+})
+
+describe("formula validation", () => {
+    it("refuses a percentage that is not a number, or outside the sane range", async () => {
+        const PricingService = await service()
+        const scope = { kind: "products", productIds: [fixture.products.small] } as const
+        await expect(PricingService.preview(scope, { kind: "percent", percent: "abc" })).rejects.toThrow(/must be a number/)
+        await expect(PricingService.preview(scope, { kind: "percent", percent: "NaN" })).rejects.toThrow(/must be a number/)
+        await expect(PricingService.preview(scope, { kind: "percent", percent: "5000" })).rejects.toThrow(/between -99% and 1000%/)
+        await expect(PricingService.preview(scope, { kind: "percent", percent: "-100" })).rejects.toThrow(/between -99% and 1000%/)
+    })
+
+    it("refuses a non-numeric amount before Decimal ever sees it", async () => {
+        const PricingService = await service()
+        const scope = { kind: "products", productIds: [fixture.products.small] } as const
+        await expect(PricingService.preview(scope, { kind: "set", amount: "12,50" })).rejects.toThrow(/must be a number/)
+        await expect(PricingService.preview(scope, { kind: "linear", multiplier: "1e3", addend: "0" })).rejects.toThrow(/must be a number/)
+    })
+})

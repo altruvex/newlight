@@ -82,7 +82,7 @@ export const NAVIGATION: NavDomain[] = [
                 label: "Stock levels",
                 href: "/admin/inventory",
                 icon: Boxes,
-                badge: (s) => (s.reviews > 0 ? s.reviews : undefined),
+                badge: (s) => (s.lowStock > 0 ? s.lowStock : undefined),
                 badgeTone: "attention",
             },
         ],

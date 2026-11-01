@@ -1,17 +1,21 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import type { AdminRole } from "@repo/database"
+import { ADMIN_ROLES, type AdminRole } from "@repo/database"
+import { z } from "zod"
 import { AdminUserService, AdminUserError } from "@/lib/services/admin-user-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { ActionResult } from "@/app/action/catalog-actions"
+
+const roleSchema = z.enum([...ADMIN_ROLES, "CUSTOMER"])
 
 function describe(error: unknown): string {
     if (error instanceof UnauthenticatedError) return "You are signed out. Sign in again."
     if (error instanceof ForbiddenError) return "Only a SUPER_ADMIN can manage administrators."
     if (error instanceof AdminUserError) return error.message
-    console.error("[admin-user-action]", error)
-    return error instanceof Error ? error.message : "Something went wrong."
+    logger.error({ err: error }, "admin user action failed")
+    return "Something went wrong. Try again, and tell an administrator if it keeps happening."
 }
 
 export async function createAdmin(input: {
@@ -28,8 +32,11 @@ export async function createAdmin(input: {
     }
 }
 
-export async function setAdminRole(userId: string, role: AdminRole | "CUSTOMER"): Promise<ActionResult> {
+export async function setAdminRole(userId: string, input: AdminRole | "CUSTOMER"): Promise<ActionResult> {
     try {
+        const parsed = roleSchema.safeParse(input)
+        if (!parsed.success) throw new AdminUserError("That is not a role.")
+        const role = parsed.data
         const { demoted } = await AdminUserService.setRole(userId, role)
         revalidatePath("/admin/team")
         return {

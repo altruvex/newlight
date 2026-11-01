@@ -18,11 +18,14 @@ export async function revalidateStorefront(target: RevalidationTarget): Promise<
         return { ok: false, error: "not configured" }
     }
 
+    // The admin mutation this follows has already committed. A slow or dead storefront must
+    // never turn that into a failure for the admin — bound the wait and report, never throw.
     try {
         const response = await fetch(url, {
             method: "POST",
             headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
             body: JSON.stringify(target),
+            signal: AbortSignal.timeout(3000),
         })
         if (!response.ok) {
             const body = await response.text()
@@ -31,7 +34,8 @@ export async function revalidateStorefront(target: RevalidationTarget): Promise<
         }
         return { ok: true }
     } catch (error) {
-        console.error(`[revalidate] ${error instanceof Error ? error.message : String(error)}`)
-        return { ok: false, error: "unreachable" }
+        const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+        console.error(`[revalidate] ${timedOut ? "timed out after 3s" : error instanceof Error ? error.message : String(error)}`)
+        return { ok: false, error: timedOut ? "timeout" : "unreachable" }
     }
 }

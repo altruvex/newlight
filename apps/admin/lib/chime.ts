@@ -11,10 +11,24 @@ export function soundEnabled(): boolean {
     }
 }
 
+const CHANGE_EVENT = "newlight.admin.notification-sound-change"
+
 export function setSoundEnabled(enabled: boolean): void {
     try {
         window.localStorage.setItem(STORAGE_KEY, enabled ? "on" : "off")
     } catch {
+    }
+    window.dispatchEvent(new Event(CHANGE_EVENT))
+}
+
+// For useSyncExternalStore: the preference lives in localStorage, so it is an external store,
+// not component state. Same-tab writes raise CHANGE_EVENT; other tabs arrive as "storage".
+export function subscribeSound(onChange: () => void): () => void {
+    window.addEventListener(CHANGE_EVENT, onChange)
+    window.addEventListener("storage", onChange)
+    return () => {
+        window.removeEventListener(CHANGE_EVENT, onChange)
+        window.removeEventListener("storage", onChange)
     }
 }
 

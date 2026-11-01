@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { TaxonomyService, TaxonomyError, type TaxonomyInput } from "@/lib/services/taxonomy-service"
 import { MediaError } from "@/lib/cloudinary"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { ActionResult } from "@/app/action/catalog-actions"
 
 function describe(error: unknown): string {
@@ -11,8 +12,8 @@ function describe(error: unknown): string {
     if (error instanceof ForbiddenError) return "Your role does not allow this."
     if (error instanceof TaxonomyError) return error.message
     if (error instanceof MediaError) return error.message
-    console.error("[taxonomy-action]", error)
-    return error instanceof Error ? error.message : "Something went wrong."
+    logger.error({ err: error }, "taxonomy action failed")
+    return "Something went wrong. Try again, and tell an administrator if it keeps happening."
 }
 
 type Result = ActionResult & { id?: string }

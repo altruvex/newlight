@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import type { ShippingOption } from "@repo/database"
 import { ShippingService, ShippingError } from "@/lib/services/shipping-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { ActionResult } from "@/app/action/catalog-actions"
 
 export async function setShippingRate(option: ShippingOption, amount: string): Promise<ActionResult> {
@@ -15,7 +16,7 @@ export async function setShippingRate(option: ShippingOption, amount: string): P
         if (error instanceof UnauthenticatedError) return { ok: false, error: "You are signed out. Sign in again." }
         if (error instanceof ForbiddenError) return { ok: false, error: "Your role does not allow this." }
         if (error instanceof ShippingError) return { ok: false, error: error.message }
-        console.error("[shipping-action]", error)
-        return { ok: false, error: "Something went wrong." }
+        logger.error({ err: error }, "shipping action failed")
+        return { ok: false, error: "Something went wrong. Try again, and tell an administrator if it keeps happening." }
     }
 }

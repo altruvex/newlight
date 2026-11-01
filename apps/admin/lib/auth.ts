@@ -1,7 +1,8 @@
+import { cache } from "react"
 import { betterAuth } from "better-auth"
 import { prismaAdapter } from "better-auth/adapters/prisma"
 import { nextCookies } from "better-auth/next-js"
-import { isAdminRole, prisma, type AdminRole } from "@repo/database"
+import { consume, isAdminRole, prisma, type AdminRole } from "@repo/database"
 
 function requiredEnv(name: string): string {
     const value = process.env[name]
@@ -48,6 +49,25 @@ export const auth = betterAuth({
 
     session: { expiresIn: 60 * 60 * 12, updateAge: 60 * 60 },
 
+    // Better Auth's own "database" storage wants a rateLimit table with a numeric lastRequest
+    // column, which the schema does not have. The shared rate_limits table (key/count/windowStart,
+    // already used by the storefront's contact form) is driven through the same atomic consume()
+    // instead — one row per IP and path, every instance agrees, no migration.
+    rateLimit: {
+        enabled: process.env.NODE_ENV === "production",
+        window: 60,
+        max: 60,
+        customRules: {
+            "/sign-in/email": { window: 60, max: 5 },
+        },
+        customStorage: {
+            async consume(key, rule) {
+                const result = await consume(prisma, `auth:${key}`, rule.max, rule.window)
+                return { allowed: result.allowed, retryAfter: result.allowed ? null : rule.window }
+            },
+        },
+    },
+
     plugins: [nextCookies()],
 })
 
@@ -75,22 +95,41 @@ export class ForbiddenError extends Error {
     }
 }
 
-export async function getIdentity(headers: Headers): Promise<AdminIdentity | null> {
-    const session = await auth.api.getSession({ headers })
-    if (!session?.user) return null
+type Session = Awaited<ReturnType<typeof auth.api.getSession>>
+
+// Either an identity, or the reason there is none — so one session read answers both the
+// nullable (currentAdmin) and the throwing (requireAdmin) callers.
+type Resolution = { identity: AdminIdentity } | { identity: null; reason: "unauthenticated" | "forbidden"; role: string }
+
+function resolve(session: Session): Resolution {
+    if (!session?.user) return { identity: null, reason: "unauthenticated", role: "" }
     const user = session.user as typeof session.user & { role?: string | null }
     const role = user.role ?? "CUSTOMER"
-    if (!isAdminRole(role)) return null
-    return { id: user.id, email: user.email, name: user.name, role, image: user.image ?? null }
+    if (!isAdminRole(role)) return { identity: null, reason: "forbidden", role }
+    return { identity: { id: user.id, email: user.email, name: user.name, role, image: user.image ?? null } }
+}
+
+function unwrap(resolution: Resolution): AdminIdentity {
+    if (resolution.identity) return resolution.identity
+    if (resolution.reason === "forbidden") throw new ForbiddenError(resolution.role)
+    throw new UnauthenticatedError()
+}
+
+// A page render calls requireCurrentAdmin from the layout, the page and every service it touches.
+// React's cache() dedupes that to one session lookup per request; outside a request scope it is
+// a plain call. Session cookieCache stays off on purpose — a revoked admin must be out on the
+// next request, not after the cache expires.
+const currentResolution = cache(async (): Promise<Resolution> => {
+    const { headers } = await import("next/headers")
+    return resolve(await auth.api.getSession({ headers: await headers() }))
+})
+
+export async function getIdentity(headers: Headers): Promise<AdminIdentity | null> {
+    return resolve(await auth.api.getSession({ headers })).identity
 }
 
 export async function requireAdmin(headers: Headers): Promise<AdminIdentity> {
-    const session = await auth.api.getSession({ headers })
-    if (!session?.user) throw new UnauthenticatedError()
-    const user = session.user as typeof session.user & { role?: string | null }
-    const role = user.role ?? "CUSTOMER"
-    if (!isAdminRole(role)) throw new ForbiddenError(role)
-    return { id: user.id, email: user.email, name: user.name, role, image: user.image ?? null }
+    return unwrap(resolve(await auth.api.getSession({ headers })))
 }
 
 export async function requireSuperAdmin(headers: Headers): Promise<AdminIdentity> {
@@ -100,18 +139,17 @@ export async function requireSuperAdmin(headers: Headers): Promise<AdminIdentity
 }
 
 export async function requireCurrentSuperAdmin(): Promise<AdminIdentity> {
-    const { headers } = await import("next/headers")
-    return requireSuperAdmin(await headers())
+    const identity = await requireCurrentAdmin()
+    if (identity.role !== "SUPER_ADMIN") throw new ForbiddenError(identity.role)
+    return identity
 }
 
 export async function currentAdmin(): Promise<AdminIdentity | null> {
-    const { headers } = await import("next/headers")
-    return getIdentity(await headers())
+    return (await currentResolution()).identity
 }
 
 export async function requireCurrentAdmin(): Promise<AdminIdentity> {
-    const { headers } = await import("next/headers")
-    return requireAdmin(await headers())
+    return unwrap(await currentResolution())
 }
 
 export async function currentAdminId(): Promise<string | null> {

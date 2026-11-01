@@ -1,75 +1,46 @@
 "use server"
 
-import { OrderStatus, prisma , countLowStock } from "@repo/database"
+import { OrderStatus, prisma, countLowStock } from "@repo/database"
 import { unstable_cache } from "next/cache"
+import { requireCurrentAdmin } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { DashboardStats } from "@/types"
 
-export const getDashboardStats = unstable_cache(
+const EMPTY_STATS: DashboardStats = {
+    orders: 0,
+    shipping: 0,
+    lowStock: 0,
+    products: 0,
+    customers: 0,
+    contacts: 0,
+    untranslated: 0,
+}
+
+// Auth lives in the exported actions, not here: the cached function is shared by every admin,
+// and a failure must throw so that unstable_cache does not hold on to a page of zeros for 60s.
+const readDashboardStats = unstable_cache(
     async (): Promise<DashboardStats> => {
-        try {
-            const [
-                pendingOrdersCount,
-                awaitingShipmentCount,
-                unreadNotificationsCount,
-                pendingReviewsCount,
-                totalProducts,
-                totalCustomers,
-                unreadContactForms,
-                untranslated,
-            ] = await Promise.all([
-                prisma.order.count({
-                    where: { status: OrderStatus.shipped },
-                }),
-
-                prisma.order.count({
-                    where: {
-                        status: OrderStatus.awaiting_shipment,
-                    },
-                }),
-
-                prisma.order.count(),
-
+        const [shippedCount, awaitingShipmentCount, lowStock, totalProducts, totalCustomers, unreadContactForms, untranslated] =
+            await Promise.all([
+                prisma.order.count({ where: { status: OrderStatus.shipped } }),
+                prisma.order.count({ where: { status: OrderStatus.awaiting_shipment } }),
                 countLowStock(prisma, 10),
-
-                prisma.product.count({
-                    where: {
-                        isActive: true,
-                    },
-                }),
-
+                prisma.product.count({ where: { isActive: true } }),
                 prisma.user.count({ where: { role: "CUSTOMER" } }),
-
-                prisma.contactForm.count({
-                    where: { isRead: false },
-                }),
-
+                prisma.contactForm.count({ where: { isRead: false } }),
                 prisma.product.count({
                     where: { deletedAt: null, translations: { none: { locale: "ar" } } },
                 }),
             ])
 
-            return {
-                orders: pendingOrdersCount + awaitingShipmentCount,
-                shipping: awaitingShipmentCount,
-                notifications: unreadNotificationsCount,
-                reviews: pendingReviewsCount,
-                products: totalProducts,
-                customers: totalCustomers,
-                contacts: unreadContactForms,
-                untranslated,
-            }
-        } catch (error) {
-            console.error("Error fetching dashboard stats:", error)
-            return {
-                orders: 0,
-                shipping: 0,
-                notifications: 0,
-                reviews: 0,
-                products: 0,
-                customers: 0,
-                contacts: 0,
-                untranslated: 0,
-            }
+        return {
+            orders: shippedCount + awaitingShipmentCount,
+            shipping: awaitingShipmentCount,
+            lowStock,
+            products: totalProducts,
+            customers: totalCustomers,
+            contacts: unreadContactForms,
+            untranslated,
         }
     },
     ["dashboard-stats"],
@@ -79,7 +50,18 @@ export const getDashboardStats = unstable_cache(
     }
 )
 
+export const getDashboardStats = async (): Promise<DashboardStats> => {
+    await requireCurrentAdmin()
+    try {
+        return await readDashboardStats()
+    } catch (error) {
+        logger.error({ err: error }, "dashboard stats could not be read")
+        return EMPTY_STATS
+    }
+}
+
 export const getOrderStats = async () => {
+    await requireCurrentAdmin()
     try {
         const stats = await prisma.order.groupBy({
             by: ["status"],
@@ -96,16 +78,17 @@ export const getOrderStats = async () => {
             {} as Record<OrderStatus, number>
         )
     } catch (error) {
-        console.error("Error fetching order stats:", error)
+        logger.error({ err: error }, "order stats could not be read")
         return {} as Record<OrderStatus, number>
     }
 }
 
 export const getLowStockCount = async (threshold: number = 10) => {
+    await requireCurrentAdmin()
     try {
         return await countLowStock(prisma, threshold)
     } catch (error) {
-        console.error("Error fetching low stock count:", error)
+        logger.error({ err: error }, "low stock count could not be read")
         return 0
     }
 }

@@ -2,15 +2,23 @@
 
 import { revalidatePath } from "next/cache"
 import { ContactFormStatus, ContactPriority, prisma } from "@repo/database"
+import { z } from "zod"
 
 import { ForbiddenError, requireCurrentAdmin, UnauthenticatedError } from "@/lib/auth"
+import { logger } from "@/lib/logger"
 import type { ActionResult } from "@/app/action/catalog-actions"
+
+class ContactActionError extends Error {}
+
+const statusSchema = z.enum(ContactFormStatus)
+const prioritySchema = z.enum(ContactPriority)
 
 function describe(error: unknown): string {
     if (error instanceof UnauthenticatedError) return "You are signed out. Sign in again."
     if (error instanceof ForbiddenError) return "Your role does not allow this."
-    console.error("[contact-action]", error)
-    return error instanceof Error ? error.message : "Something went wrong."
+    if (error instanceof ContactActionError) return error.message
+    logger.error({ err: error }, "contact action failed")
+    return "Something went wrong. Try again, and tell an administrator if it keeps happening."
 }
 
 async function run(fn: () => Promise<string>): Promise<ActionResult> {
@@ -65,9 +73,12 @@ export async function setContactRead(id: string, read: boolean): Promise<ActionR
     })
 }
 
-export async function setContactStatus(id: string, status: ContactFormStatus): Promise<ActionResult> {
+export async function setContactStatus(id: string, input: ContactFormStatus): Promise<ActionResult> {
     return run(async () => {
         const admin = await requireCurrentAdmin()
+        const parsed = statusSchema.safeParse(input)
+        if (!parsed.success) throw new ContactActionError("That is not a contact status.")
+        const status = parsed.data
 
         await prisma.$transaction(async (tx) => {
             const before = await tx.contactForm.findUniqueOrThrow({
@@ -102,9 +113,12 @@ export async function setContactStatus(id: string, status: ContactFormStatus): P
     })
 }
 
-export async function setContactPriority(id: string, priority: ContactPriority): Promise<ActionResult> {
+export async function setContactPriority(id: string, input: ContactPriority): Promise<ActionResult> {
     return run(async () => {
         const admin = await requireCurrentAdmin()
+        const parsed = prioritySchema.safeParse(input)
+        if (!parsed.success) throw new ContactActionError("That is not a priority level.")
+        const priority = parsed.data
 
         await prisma.$transaction(async (tx) => {
             const before = await tx.contactForm.findUniqueOrThrow({
