@@ -1,26 +1,6 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from 'next-intl/plugin';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const withPWA = require("next-pwa")({
-  dest: "public",
-  disable: process.env.NODE_ENV === "development",
-  register: true,
-  skipWaiting: true,
-  runtimeCaching: [
-    {
-      urlPattern: /^https?.*/,
-      handler: "NetworkFirst",
-      options: {
-        cacheName: "offlineCache",
-        expiration: {
-          maxEntries: 200,
-        },
-      },
-    },
-  ],
-});
-
 const nextConfig: NextConfig = {
   async redirects() {
     return [
@@ -83,9 +63,6 @@ const nextConfig: NextConfig = {
   },
   reactStrictMode: true,
   transpilePackages: ["@repo/database"],
-  compiler: {
-    styledComponents: true,
-  },
   compress: true,
   poweredByHeader: false,
   images: {
@@ -94,20 +71,12 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "res.cloudinary.com",
       },
-      {
-        protocol: "https",
-        hostname: "images.unsplash.com",
-      },
-      {
-        protocol: "https",
-        hostname: "api.dicebear.com",
-      },
     ],
+    // Local /public images are immutable per deploy; keep optimized copies for 31 days
+    // instead of re-transforming them (Cloudinary images bypass this via the custom loader).
+    minimumCacheTTL: 2678400,
   },
 };
 
 const withNextIntl = createNextIntlPlugin();
-let config = withNextIntl(nextConfig);
-config = withPWA(config);
-
-export default config;
+export default withNextIntl(nextConfig);

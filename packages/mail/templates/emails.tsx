@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Hr, Img, Link, Section, Text } from "@react-email/components"
+import { Hr, Img, Link, Section, Text } from "react-email"
 import type { MailLocale } from "../types"
 import { ActionButton, DetailRows, INK, MUTED, Muted, Paragraph, RULE, Shell } from "./layout"
 import { strings, t } from "./strings"

@@ -21,22 +21,22 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@react-email/components": "^1.0.12",
-    "@react-email/render": "^1.4.0",
-    "@repo/database": "workspace:*"
+    "@react-email/render": "^2.2.0",
+    "@repo/database": "workspace:*",
+    "react-email": "^6.11.6"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
+    "@eslint/js": "^9.39.5",
     "@repo/typescript-config": "workspace:*",
-    "@types/node": "^24.10.2",
-    "@types/react": "^19.2.7",
+    "@types/node": "^24",
+    "@types/react": "^19.3.0",
     "@typescript/native": "npm:typescript@7.0.2",
-    "eslint": "^9.39.4",
-    "globals": "^16.5.0",
-    "react": "^19.2.8",
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0",
+    "react": "19.3.1",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "typescript-eslint": "^8.70.0",
-    "vitest": "^5.0.0"
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
   },
   "peerDependencies": {
     "react": ">=19"

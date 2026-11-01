@@ -56,9 +56,6 @@ const nextConfig: NextConfig = {
   },
   reactStrictMode: true,
   transpilePackages: ["@repo/database"],
-  compiler: {
-    styledComponents: true,
-  },
   compress: true,
   poweredByHeader: false,
   images: {
@@ -66,14 +63,6 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "res.cloudinary.com",
-      },
-      {
-        protocol: "https",
-        hostname: "images.unsplash.com",
-      },
-      {
-        protocol: "https",
-        hostname: "api.dicebear.com",
       },
     ],
   },

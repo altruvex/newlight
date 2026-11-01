@@ -78,26 +78,24 @@
     "author": "Alphabyte",
     "license": "ISC",
     "dependencies": {
-        "@prisma/adapter-pg": "7.10.0",
-        "@prisma/client": "^7.10.0",
-        "@prisma/extension-optimize": "^2.0.1",
-        "@prisma/instrumentation": "^7.10.0",
-        "better-auth": "^1.7.3",
-        "dotenv": "^17.2.3",
+        "@prisma/adapter-pg": "7.10.1",
+        "@prisma/client": "^7.10.1",
+        "better-auth": "^1.7.15",
+        "dotenv": "^18.0.9",
         "dotenv-flow": "^4.1.0"
     },
     "devDependencies": {
-        "@eslint/js": "^9.39.4",
+        "@eslint/js": "^9.39.5",
         "@repo/typescript-config": "workspace:*",
-        "@types/node": "^24.10.2",
+        "@types/node": "^24",
         "@typescript/native": "npm:typescript@7.0.2",
-        "eslint": "^9.39.4",
-        "globals": "^16.5.0",
-        "prisma": "^7.10.0",
-        "tsx": "^4.21.0",
+        "eslint": "^9.39.5",
+        "globals": "^17.14.0",
+        "prisma": "^7.10.1",
+        "tsx": "^4.23.15",
         "typescript": "npm:@typescript/typescript6@6.0.2",
-        "typescript-eslint": "^8.70.0",
-        "vitest": "^5.0.0"
+        "typescript-eslint": "^8.72.1",
+        "vitest": "^5.0.5"
     },
     "browser": {
         "./prisma-client.ts": "./prisma-client.browser.ts",

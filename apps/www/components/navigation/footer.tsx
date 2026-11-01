@@ -4,7 +4,7 @@ import { Link } from "@/i18n/navigation";
 import { CategoryService } from "@/lib/services/category-service";
 import { convertToArabicNumerals } from "@/lib/utils";
 import { getLocale, getTranslations } from "next-intl/server";
-import { Facebook, Instagram } from "lucide-react";
+import { FaFacebook, FaInstagram } from "react-icons/fa";
 
 export async function Footer() {
     const t = await getTranslations("footer");
@@ -153,7 +153,7 @@ export async function Footer() {
                                     className="grid size-10 place-items-center rounded-md border transition-colors duration-(--duration-fast) hover:bg-accent"
                                     aria-label="Facebook"
                                 >
-                                    <Facebook aria-hidden className="size-5" />
+                                    <FaFacebook aria-hidden className="size-5" />
                                 </Link>
                                 <Link
                                     href={socialLinks.instagram}
@@ -162,7 +162,7 @@ export async function Footer() {
                                     className="grid size-10 place-items-center rounded-md border transition-colors duration-(--duration-fast) hover:bg-accent"
                                     aria-label="Instagram"
                                 >
-                                    <Instagram aria-hidden className="size-5" />
+                                    <FaInstagram aria-hidden className="size-5" />
                                 </Link>
                             </div>
                         </div>

@@ -26,15 +26,15 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
+    "@eslint/js": "^9.39.5",
     "@repo/typescript-config": "workspace:*",
-    "@types/node": "^24.10.2",
+    "@types/node": "^24",
     "@types/web-push": "^3.6.4",
     "@typescript/native": "npm:typescript@7.0.2",
-    "eslint": "^9.39.4",
-    "globals": "^16.5.0",
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "typescript-eslint": "^8.70.0",
-    "vitest": "^5.0.0"
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
   }
 }
