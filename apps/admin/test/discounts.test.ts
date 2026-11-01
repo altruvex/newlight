@@ -292,3 +292,34 @@ describe("the list", () => {
         expect(ended.total).toBe(1)
     })
 })
+
+describe("product search for the picker", () => {
+    it("matches by SKU and by English name, ignoring case", async () => {
+        const DiscountService = await service()
+        await db.prisma.productTranslation.updateMany({
+            where: { productId: fixture.products.single, locale: "en" },
+            data: { name: "Garden Spotlight" },
+        })
+
+        const bySku = await DiscountService.searchProducts("NL-TEST-5W")
+        expect(bySku.map((hit) => hit.sku)).toEqual(["nl-test-5w"])
+        expect(bySku[0]).toMatchObject({ id: fixture.products.small, name: "nl-test-5w" })
+
+        const byName = await DiscountService.searchProducts("spotlight")
+        expect(byName.map((hit) => [hit.id, hit.name])).toEqual([[fixture.products.single, "Garden Spotlight"]])
+
+        // Fewer than two characters never touches the database.
+        expect(await DiscountService.searchProducts("n")).toEqual([])
+    })
+
+    it("respects the limit and leaves out deleted products", async () => {
+        const DiscountService = await service()
+        expect((await DiscountService.searchProducts("nl-")).length).toBe(3)
+        expect((await DiscountService.searchProducts("nl-", 2)).length).toBe(2)
+
+        await db.prisma.product.update({ where: { id: fixture.products.small }, data: { deletedAt: new Date() } })
+        const after = await DiscountService.searchProducts("nl-")
+        expect(after.map((hit) => hit.sku)).not.toContain("nl-test-5w")
+        expect(after.length).toBe(2)
+    })
+})

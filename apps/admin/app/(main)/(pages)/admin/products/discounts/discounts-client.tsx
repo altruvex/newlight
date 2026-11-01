@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -25,6 +25,7 @@ import {
     deleteDiscount,
     previewDiscount,
     rescheduleDiscount,
+    searchDiscountProducts,
     stopDiscount,
     type DiscountFormInput,
 } from "@/app/action/discount-actions"
@@ -51,7 +52,7 @@ interface Props {
     categories: Option[]
     subCategories: Array<Option & { categoryId: string }>
     families: Array<Option & { subCategoryId: string }>
-    products: ProductOption[]
+    productCount: number
 }
 
 const SCOPE_LABELS: Record<DiscountScopeType, string> = {
@@ -96,7 +97,7 @@ function defaultWindow(): { startsAt: string; endsAt: string } {
     return { startsAt: toLocalInput(start), endsAt: toLocalInput(end) }
 }
 
-export function DiscountsClient({ discounts, view, page, totalPages, total, categories, subCategories, families, products }: Props) {
+export function DiscountsClient({ discounts, view, page, totalPages, total, categories, subCategories, families, productCount }: Props) {
     const [creating, setCreating] = useState(false)
     const ended = view === "ended"
     const pageHref = (target: number) => {
@@ -113,7 +114,7 @@ export function DiscountsClient({ discounts, view, page, totalPages, total, cate
                 categories={categories}
                 subCategories={subCategories}
                 families={families}
-                products={products}
+                productCount={productCount}
                 onDone={() => setCreating(false)}
             />
         )
@@ -399,9 +400,9 @@ function CreateDiscount({
     categories,
     subCategories,
     families,
-    products,
+    productCount,
     onDone,
-}: Pick<Props, "categories" | "subCategories" | "families" | "products"> & { onDone: () => void }) {
+}: Pick<Props, "categories" | "subCategories" | "families" | "productCount"> & { onDone: () => void }) {
     const initialWindow = useMemo(() => defaultWindow(), [])
 
     const [name, setName] = useState("")
@@ -409,6 +410,9 @@ function CreateDiscount({
     const [scopeId, setScopeId] = useState("")
     const [productIds, setProductIds] = useState<string[]>([])
     const [search, setSearch] = useState("")
+    const [found, setFound] = useState<{ term: string; hits: ProductOption[] }>({ term: "", hits: [] })
+    // Labels of everything ticked so far: a picked product must stay readable after the search moves on.
+    const [picked, setPicked] = useState<Record<string, ProductOption>>({})
     const [kind, setKind] = useState<DiscountKind>("PERCENT")
     const [value, setValue] = useState("15")
     const [startsAt, setStartsAt] = useState(initialWindow.startsAt)
@@ -428,16 +432,23 @@ function CreateDiscount({
     const scopeOptions: Option[] =
         scopeType === "CATEGORY" ? categories : scopeType === "SUB_CATEGORY" ? subCategories : families
 
-    const filteredProducts = useMemo(() => {
-        const needle = search.trim().toLowerCase()
-        if (!needle) return products.slice(0, 60)
-        return products
-            .filter(
-                (product) =>
-                    product.sku.toLowerCase().includes(needle) || product.name.toLowerCase().includes(needle)
-            )
-            .slice(0, 60)
-    }, [products, search])
+    useEffect(() => {
+        const term = search.trim()
+        if (term.length < 2) return
+        let stale = false
+        const timer = setTimeout(async () => {
+            const hits = await searchDiscountProducts(term)
+            if (stale) return
+            setFound({ term, hits })
+        }, 250)
+        return () => {
+            stale = true
+            clearTimeout(timer)
+        }
+    }, [search])
+
+    // Results are for the term they were fetched with; until that matches what is typed, a search is in flight.
+    const searching = search.trim().length >= 2 && found.term !== search.trim()
 
     function buildScope(): DiscountScopeInput {
         switch (scopeType) {
@@ -566,23 +577,24 @@ function CreateDiscount({
 
                                 {scopeType === "PRODUCTS" ? (
                                     <ProductPicker
-                                        products={filteredProducts}
-                                        total={products.length}
-                                        selected={productIds}
+                                        results={found.hits}
+                                        searching={searching}
+                                        selected={productIds.map((id) => picked[id]).filter(Boolean)}
                                         search={search}
                                         onSearch={setSearch}
-                                        onToggle={(id) =>
-                                            invalidate(setProductIds)(
-                                                productIds.includes(id)
-                                                    ? productIds.filter((current) => current !== id)
-                                                    : [...productIds, id]
-                                            )
-                                        }
+                                        onToggle={(product) => {
+                                            if (productIds.includes(product.id)) {
+                                                invalidate(setProductIds)(productIds.filter((id) => id !== product.id))
+                                                return
+                                            }
+                                            setPicked((current) => ({ ...current, [product.id]: product }))
+                                            invalidate(setProductIds)([...productIds, product.id])
+                                        }}
                                         onClear={() => invalidate(setProductIds)([])}
                                     />
                                 ) : scopeType === "ALL" ? (
                                     <InlineAlert tone="warning" title="Every live product">
-                                        A catalogue-wide discount applies to all {products.length} products,
+                                        A catalogue-wide discount applies to all {productCount} products,
                                         including anything added while it is running.
                                     </InlineAlert>
                                 ) : (
@@ -754,23 +766,51 @@ function CreateDiscount({
     )
 }
 
+function ProductRow({
+    product,
+    checked,
+    onToggle,
+}: {
+    product: ProductOption
+    checked: boolean
+    onToggle: (product: ProductOption) => void
+}) {
+    return (
+        <li className="border-b last:border-b-0">
+            <label className="flex h-[34px] cursor-pointer items-center gap-2.5 px-2.5 hover:bg-accent/40">
+                <Checkbox
+                    checked={checked}
+                    onCheckedChange={() => onToggle(product)}
+                    aria-label={`${product.sku} ${product.name}`}
+                />
+                <span className="w-[110px] shrink-0 font-mono text-xs">{product.sku}</span>
+                <span className="min-w-0 flex-1 truncate text-sm">{product.name}</span>
+            </label>
+        </li>
+    )
+}
+
 function ProductPicker({
-    products,
-    total,
+    results,
+    searching,
     selected,
     search,
     onSearch,
     onToggle,
     onClear,
 }: {
-    products: ProductOption[]
-    total: number
-    selected: string[]
+    results: ProductOption[]
+    searching: boolean
+    selected: ProductOption[]
     search: string
     onSearch: (value: string) => void
-    onToggle: (id: string) => void
+    onToggle: (product: ProductOption) => void
     onClear: () => void
 }) {
+    const searchable = search.trim().length >= 2
+    const selectedIds = new Set(selected.map((product) => product.id))
+    const matches = results.filter((product) => !selectedIds.has(product.id))
+
     return (
         <div className="max-w-[520px] space-y-2">
             <div className="flex items-end gap-2">
@@ -793,32 +833,31 @@ function ProductPicker({
             </div>
 
             <div className="max-h-[280px] overflow-auto rounded-md border border-border-strong">
-                {products.length === 0 ? (
+                {selected.length > 0 && (
+                    <ul className="border-b border-border-strong bg-surface-sunk">
+                        {selected.map((product) => (
+                            <ProductRow key={product.id} product={product} checked onToggle={onToggle} />
+                        ))}
+                    </ul>
+                )}
+                {!searchable ? (
+                    <p className="px-2.5 py-3 text-xs text-muted-foreground">Type at least 2 characters to search.</p>
+                ) : searching ? (
+                    <p className="px-2.5 py-3 text-xs text-muted-foreground">Searching…</p>
+                ) : matches.length === 0 ? (
                     <EmptyState variant="no-results" title="No product matches that" />
                 ) : (
                     <ul>
-                        {products.map((product) => {
-                            const checked = selected.includes(product.id)
-                            return (
-                                <li key={product.id} className="border-b last:border-b-0">
-                                    <label className="flex h-[34px] cursor-pointer items-center gap-2.5 px-2.5 hover:bg-accent/40">
-                                        <Checkbox
-                                            checked={checked}
-                                            onCheckedChange={() => onToggle(product.id)}
-                                            aria-label={`${product.sku} ${product.name}`}
-                                        />
-                                        <span className="w-[110px] shrink-0 font-mono text-xs">{product.sku}</span>
-                                        <span className="min-w-0 flex-1 truncate text-sm">{product.name}</span>
-                                    </label>
-                                </li>
-                            )
-                        })}
+                        {matches.map((product) => (
+                            <ProductRow key={product.id} product={product} checked={false} onToggle={onToggle} />
+                        ))}
                     </ul>
                 )}
             </div>
 
             <p className="text-2xs text-muted-foreground">
-                {selected.length} selected. Showing {products.length} of {total} — search to narrow the list.
+                {selected.length} selected.{" "}
+                {searchable && !searching && results.length >= 20 ? "Showing the first 20 matches — refine the search to narrow it." : ""}
             </p>
         </div>
     )

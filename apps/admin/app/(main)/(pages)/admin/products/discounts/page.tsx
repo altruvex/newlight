@@ -16,9 +16,8 @@ export default async function DiscountsPage({
     const params = await searchParams
     const view = params.status === "ended" ? "ended" : "current"
 
-    // The picker below still gets every active product: the catalogue is bounded (~190) and the
-    // "specific products" scope needs the whole list to search client-side.
-    const [discounts, categories, subCategories, families, products] = await Promise.all([
+    // The "specific products" picker searches on demand (searchDiscountProducts); only a count is loaded here.
+    const [discounts, categories, subCategories, families, productCount] = await Promise.all([
         DiscountService.list({ view, page: Number(params.page ?? 1) || 1 }),
         prisma.category.findMany({
             where: { deletedAt: null },
@@ -40,17 +39,7 @@ export default async function DiscountsPage({
             select: { id: true, slug: true, subCategoryId: true, _count: { select: { products: true } } },
             orderBy: { slug: "asc" },
         }),
-        prisma.product.findMany({
-            where: { deletedAt: null, isActive: true },
-            select: {
-                id: true,
-                productId: true,
-                subCategoryId: true,
-                familyId: true,
-                translations: { where: { locale: "en" }, select: { name: true }, take: 1 },
-            },
-            orderBy: { productId: "asc" },
-        }),
+        prisma.product.count({ where: { deletedAt: null, isActive: true } }),
     ])
 
     return (
@@ -83,11 +72,7 @@ export default async function DiscountsPage({
                         name: family.slug,
                         productCount: family._count.products,
                     }))}
-                    products={products.map((product) => ({
-                        id: product.id,
-                        sku: product.productId,
-                        name: product.translations[0]?.name ?? product.productId,
-                    }))}
+                    productCount={productCount}
                 />
             </PageBody>
         </>

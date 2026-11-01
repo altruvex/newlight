@@ -6,6 +6,7 @@ import {
     DiscountError,
     DiscountService,
     type DiscountInput,
+    type DiscountProductHit,
     type DiscountPreview,
     type DiscountScopeInput,
 } from "@/lib/services/discount-service"
@@ -41,6 +42,15 @@ function toInput(form: DiscountFormInput): DiscountInput {
         scope: form.scope,
         startsAt: new Date(form.startsAt),
         endsAt: new Date(form.endsAt),
+    }
+}
+
+export async function searchDiscountProducts(term: string): Promise<DiscountProductHit[]> {
+    try {
+        return await DiscountService.searchProducts(typeof term === "string" ? term.slice(0, 100) : "")
+    } catch (error) {
+        logger.warn({ err: error }, "discount product search failed")
+        return []
     }
 }
 

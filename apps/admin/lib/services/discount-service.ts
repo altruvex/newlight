@@ -181,7 +181,42 @@ function asCandidate(input: DiscountInput, productIds: readonly string[]): Activ
     }
 }
 
+export interface DiscountProductHit {
+    id: string
+    sku: string
+    name: string
+}
+
+export const DISCOUNT_PRODUCT_SEARCH_LIMIT = 20
+export const DISCOUNT_PRODUCT_SEARCH_MIN = 2
+
 export class DiscountService {
+    /** Picker lookup for the "specific products" scope: live products matching a SKU or English name. */
+    static async searchProducts(term: string, limit = DISCOUNT_PRODUCT_SEARCH_LIMIT): Promise<DiscountProductHit[]> {
+        await requireCurrentAdmin()
+        const needle = term.trim()
+        if (needle.length < DISCOUNT_PRODUCT_SEARCH_MIN) return []
+
+        const rows = await prisma.product.findMany({
+            where: {
+                deletedAt: null,
+                isActive: true,
+                OR: [
+                    { productId: { contains: needle, mode: "insensitive" } },
+                    { translations: { some: { locale: "en", name: { contains: needle, mode: "insensitive" } } } },
+                ],
+            },
+            select: {
+                id: true,
+                productId: true,
+                translations: { where: { locale: "en" }, select: { name: true }, take: 1 },
+            },
+            orderBy: { productId: "asc" },
+            take: Math.min(Math.max(1, Math.floor(limit)), DISCOUNT_PRODUCT_SEARCH_LIMIT),
+        })
+        return rows.map((row) => ({ id: row.id, sku: row.productId, name: row.translations[0]?.name ?? row.productId }))
+    }
+
     static async list(options: { view?: DiscountView; page?: number } = {}): Promise<DiscountList> {
         await requireCurrentAdmin()
         const now = new Date()

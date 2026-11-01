@@ -6,6 +6,7 @@ import { z } from "zod"
 
 import { ForbiddenError, requireCurrentAdmin, UnauthenticatedError } from "@/lib/auth"
 import { logger } from "@/lib/logger"
+import { ContactService } from "@/lib/services/contact-service"
 import type { ActionResult } from "@/app/action/catalog-actions"
 
 class ContactActionError extends Error {}
@@ -26,6 +27,15 @@ async function run(fn: () => Promise<string>): Promise<ActionResult> {
         const message = await fn()
         revalidatePath("/admin/contact")
         return { ok: true, message }
+    } catch (error) {
+        return { ok: false, error: describe(error) }
+    }
+}
+
+/** Full message text for the open enquiry sheet; the list only sends a preview. */
+export async function getContactMessage(id: string): Promise<{ ok: true; message: string | null } | { ok: false; error: string }> {
+    try {
+        return { ok: true, message: await ContactService.getMessage(id) }
     } catch (error) {
         return { ok: false, error: describe(error) }
     }

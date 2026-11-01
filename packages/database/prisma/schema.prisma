@@ -359,6 +359,8 @@ model AdminAuditLog {
   @@index([entity, entityId, createdAt])
   @@index([actorId, createdAt])
   @@index([createdAt])
+  /// Price history: `diff @> {"changes":[{"sku":…}]}` is an index lookup, not a scan.
+  @@index([diff(ops: JsonbPathOps)], type: Gin)
   @@map("admin_audit_log")
 }
 

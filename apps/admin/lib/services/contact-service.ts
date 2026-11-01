@@ -12,7 +12,8 @@ export interface ContactRow {
     jobPosition: string
     email: string
     phoneNumber: string
-    message: string | null
+    /** First PREVIEW_CHARS of the message, cut in SQL. The full text comes from `getMessage` when a row is opened. */
+    preview: string | null
     status: ContactFormStatus
     priority: ContactPriority
     isRead: boolean
@@ -72,6 +73,8 @@ function buildOrderBy(state: TableState): Prisma.ContactFormOrderByWithRelationI
     }
 }
 
+export const PREVIEW_CHARS = 160
+
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000
 
 export class ContactService {
@@ -103,7 +106,6 @@ export class ContactService {
                 jobPosition: true,
                 email: true,
                 phoneNumber: true,
-                message: true,
                 status: true,
                 priority: true,
                 isRead: true,
@@ -113,6 +115,20 @@ export class ContactService {
             },
         })
 
+        // The message column is left out of the row query above so the full text never leaves the
+        // database for list rows; this reads only the first PREVIEW_CHARS of it for the rows on the page.
+        const ids = forms.map((form) => form.id)
+        const previews =
+            ids.length === 0
+                ? []
+                : await prisma.$queryRaw<Array<{ id: string; preview: string | null }>>(
+                      Prisma.sql`
+                          SELECT id, left(message, ${PREVIEW_CHARS}::int) AS preview
+                          FROM contact_forms
+                          WHERE id = ANY(${ids}::text[])`
+                  )
+        const previewById = new Map(previews.map((row) => [row.id, row.preview]))
+
         return {
             rows: forms.map((form) => ({
                 id: form.id,
@@ -120,7 +136,7 @@ export class ContactService {
                 jobPosition: form.jobPosition,
                 email: form.email,
                 phoneNumber: form.phoneNumber,
-                message: form.message,
+                preview: previewById.get(form.id) ?? null,
                 status: form.status,
                 priority: form.priority,
                 isRead: form.isRead,
@@ -133,5 +149,12 @@ export class ContactService {
             stale,
             urgent,
         }
+    }
+
+    /** The full message of one enquiry; the list only carries a preview. */
+    static async getMessage(id: string): Promise<string | null> {
+        await requireCurrentAdmin()
+        const form = await prisma.contactForm.findUnique({ where: { id }, select: { message: true } })
+        return form?.message ?? null
     }
 }

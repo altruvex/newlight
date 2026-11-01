@@ -1,7 +1,7 @@
 "use client"
 
 import type { ColumnDef } from "@tanstack/react-table"
-import { useState, useTransition } from "react"
+import { useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Mail, Phone } from "lucide-react"
@@ -19,7 +19,7 @@ import { MetadataList } from "@/components/page"
 import { statusLabel } from "@/lib/status"
 import type { ContactListResult, ContactRow } from "@/lib/services/contact-service"
 import type { TableState } from "@/lib/table-params"
-import { deleteContact, setContactPriority, setContactRead, setContactStatus } from "@/app/action/contact-actions"
+import { deleteContact, getContactMessage, setContactPriority, setContactRead, setContactStatus } from "@/app/action/contact-actions"
 
 interface Props extends ContactListResult {
     state: TableState
@@ -29,6 +29,25 @@ export function ContactTable({ rows, total, state }: Props) {
     const router = useRouter()
     const [open, setOpen] = useState<ContactRow | null>(null)
     const [pending, start] = useTransition()
+    // Full text of the open enquiry, fetched by id; undefined while loading, null when blank.
+    const [full, setFull] = useState<{ id: string; message: string | null } | null>(null)
+    const [failedId, setFailedId] = useState<string | null>(null)
+    const openId = open?.id
+
+    useEffect(() => {
+        if (!openId) return
+        let cancelled = false
+        getContactMessage(openId).then((result) => {
+            if (cancelled) return
+            if (result.ok) setFull({ id: openId, message: result.message })
+            else setFailedId(openId)
+        })
+        return () => {
+            cancelled = true
+        }
+    }, [openId])
+    const loadFailed = failedId === openId
+    const fullMessage = full && full.id === openId ? full.message : undefined
 
     const act = (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) =>
         start(async () => {
@@ -74,8 +93,8 @@ export function ContactTable({ rows, total, state }: Props) {
             id: "message",
             header: "Message",
             cell: ({ row }) =>
-                row.original.message ? (
-                    <CellText className="max-w-[40ch] text-muted-foreground">{row.original.message}</CellText>
+                row.original.preview ? (
+                    <CellText className="max-w-[40ch] text-muted-foreground">{row.original.preview}</CellText>
                 ) : (
                     <span className="text-2xs text-muted-foreground">No message</span>
                 ),
@@ -210,10 +229,19 @@ export function ContactTable({ rows, total, state }: Props) {
                                     <h3 className="text-2xs font-semibold tracking-label text-muted-foreground uppercase">
                                         Message
                                     </h3>
-                                    {open.message ? (
+                                    {fullMessage === undefined && open.preview ? (
                                         <p className="mt-1.5 rounded-lg border bg-surface-sunk p-3 text-sm whitespace-pre-wrap">
-                                            <bdi dir="auto">{open.message}</bdi>
+                                            <bdi dir="auto">{open.preview}</bdi>
+                                            <span className="text-muted-foreground">
+                                                {loadFailed ? " (could not load the full message)" : " …"}
+                                            </span>
                                         </p>
+                                    ) : fullMessage ? (
+                                        <p className="mt-1.5 rounded-lg border bg-surface-sunk p-3 text-sm whitespace-pre-wrap">
+                                            <bdi dir="auto">{fullMessage}</bdi>
+                                        </p>
+                                    ) : fullMessage === undefined && !loadFailed ? (
+                                        <p className="mt-1.5 text-xs text-muted-foreground">Loading…</p>
                                     ) : (
                                         <p className="mt-1.5 text-xs text-muted-foreground italic">
                                             They left the message blank — the form does not require one.
