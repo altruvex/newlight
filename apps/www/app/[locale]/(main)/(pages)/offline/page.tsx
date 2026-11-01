@@ -1,9 +1,10 @@
 import { constructMetadata } from "@/lib/metadata";
 import { createPageCanonicalUrl } from "@/lib/canonical-url";
 import { SupportedLanguage } from "@/types";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server";
 
-export async function generateMetadata() {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("metadatas.offline");
 
     const locale = await getLocale() as SupportedLanguage
@@ -17,7 +18,8 @@ export async function generateMetadata() {
     });
 }
 
-export default async function OfflinePage() {
+export default async function OfflinePage({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("offline");
     return (
         <div className="flex min-h-screen items-center justify-center">

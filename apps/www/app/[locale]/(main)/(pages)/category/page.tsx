@@ -1,13 +1,14 @@
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { resolveLocale } from "@repo/database"
 import { CategoryService } from "@/lib/services/category-service"
 import { constructMetadata } from "@/lib/metadata"
 import { createPageCanonicalUrl } from "@/lib/canonical-url"
 import CategoriesSection from "./category"
 
-export const revalidate = 14400
+export const revalidate = 900
 
-export async function generateMetadata() {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("metadatas.category-page")
     const locale = resolveLocale(await getLocale())
     return constructMetadata({
@@ -18,7 +19,8 @@ export async function generateMetadata() {
     })
 }
 
-export default async function CategoriesPage() {
+export default async function CategoriesPage({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const locale = resolveLocale(await getLocale())
     const all = await CategoryService.getAllCategories(locale)
 

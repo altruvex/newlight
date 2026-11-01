@@ -1,10 +1,11 @@
 import { constructMetadata } from "@/lib/metadata";
 import { SupportedLanguage } from "@/types";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server";
 import ContactPage from "./contact";
 import { createPageCanonicalUrl } from "@/lib/canonical-url";
 
-export async function generateMetadata() {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("metadatas.contact");
     const locale = await getLocale() as SupportedLanguage;
     const canonicalUrl = createPageCanonicalUrl({
@@ -19,6 +20,7 @@ export async function generateMetadata() {
     });
 }
 
-export default async function Page() {
+export default async function Page({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     return <ContactPage />;
 }

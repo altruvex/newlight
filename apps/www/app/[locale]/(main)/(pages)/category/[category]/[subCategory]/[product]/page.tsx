@@ -1,10 +1,11 @@
 import type { Metadata } from "next"
+import { cache } from "react"
 import { ProductStrip } from "@/components/product-strip"
 import { JsonLd, breadcrumbSchema, productSchema } from "@/lib/structured-data"
 import { PurchaseAssurance } from "@/components/purchase-assurance"
 import { RecentlyViewed, RecordView } from "@/components/recently-viewed"
 import { relatedProducts } from "@/lib/services/merchandising-service"
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { notFound, permanentRedirect } from "next/navigation"
 import { encodeSlug, resolveLocale } from "@repo/database"
 import { ProductService } from "@/lib/services/product-service"
@@ -13,12 +14,13 @@ import { createProductCanonicalUrl } from "@/lib/canonical-url"
 import { alternateCategorySlug, alternateSubCategorySlug, resolveProductSlug } from "@/lib/services/taxonomy"
 import ProductPage from "./product-page"
 
-export const revalidate = 3600
+export const revalidate = 900
 
 type Props = { params: Promise<{ category: string; subCategory: string; product: string; locale: string }> }
 
-async function load(params: Props["params"]) {
-    const { category, subCategory, product } = await params
+// generateMetadata and the page both need this; cache() lets the second call reuse the
+// first one's queries within a render instead of running them again.
+const loadCached = cache(async (category: string, subCategory: string, product: string) => {
     const locale = resolveLocale(await getLocale())
     const slug = decodeURIComponent(product)
 
@@ -33,6 +35,18 @@ async function load(params: Props["params"]) {
     const view = await ProductService.getProductBySlug(slug, locale)
     if (!view) notFound()
     return { view, locale }
+})
+
+async function load(params: Props["params"]) {
+    const resolved = await params
+    setRequestLocale(resolved.locale)
+    return loadCached(resolved.category, resolved.subCategory, resolved.product)
+}
+
+// No product is prebuilt (the catalogue is too large to render at every deploy): each one
+// renders on its first visit and is then served from cache until `revalidate` or a purge.
+export function generateStaticParams() {
+    return []
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {

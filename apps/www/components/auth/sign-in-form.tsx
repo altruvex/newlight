@@ -7,6 +7,16 @@ import { signIn } from "@/lib/auth-client"
 import { Link } from "@/i18n/navigation"
 import { AuthField, AuthMessage, AuthShell, AuthSubmit } from "./auth-form"
 
+// Only a path on this site: "/x" but never "//host" or "/\\host", which browsers treat as
+// another origin — nor anything with whitespace or control characters, which the URL parser
+// strips (so "/\t/host" would become "//host"). Anything else falls back to the home page.
+const SAME_ORIGIN_PATH = /^\/[^/\\]/
+const STRIPPED_BY_URL_PARSER = /[\s\u0000-\u001f\u007f]/
+
+function safeRedirect(target: string | null | undefined): string | null {
+    return target && SAME_ORIGIN_PATH.test(target) && !STRIPPED_BY_URL_PARSER.test(target) ? target : null
+}
+
 export function SignInForm({ redirectTo }: { redirectTo?: string }) {
     const t = useTranslations("auth")
     const locale = useLocale()
@@ -37,7 +47,11 @@ export function SignInForm({ redirectTo }: { redirectTo?: string }) {
             )
             return
         }
-        router.push(redirectTo ?? `/${locale}`)
+        // The proxy sends signed-out visitors here with ?redirectTo=<the page they wanted>.
+        // It is read at submit time rather than with useSearchParams so the page can stay
+        // statically rendered without a loading placeholder in place of the form.
+        const requested = new URLSearchParams(window.location.search).get("redirectTo")
+        router.push(safeRedirect(redirectTo) ?? safeRedirect(requested) ?? `/${locale}`)
         router.refresh()
     }
 

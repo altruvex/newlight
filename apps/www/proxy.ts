@@ -10,10 +10,6 @@ const PROTECTED = ["/account", "/cart", "/orders", "/confirm", "/complete"]
 export default function proxy(request: NextRequest) {
     const { pathname } = request.nextUrl
 
-    if (pathname.startsWith("/api/") || pathname.startsWith("/trpc/")) {
-        return NextResponse.next()
-    }
-
     const withoutLocale = pathname.replace(/^\/(en|ar)(?=\/|$)/, "") || "/"
 
     if (PROTECTED.some((path) => withoutLocale === path || withoutLocale.startsWith(`${path}/`))) {
@@ -29,8 +25,12 @@ export default function proxy(request: NextRequest) {
 }
 
 export const config = {
+    // Skips /api/* (the proxy has nothing to do there, and every match is an invocation),
+    // Next's own assets, and files by extension. Only real file extensions are skipped, so a
+    // protected path that merely contains a dot (/account/x.y) still reaches the guard above.
+    // The locale-prefixed API routes (/en/api/*) still pass through: next-intl's locale header
+    // is how their handlers know the request's language.
     matcher: [
-        "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|.*\\..*).*)",
-        "/(api|trpc)(.*)",
+        "/((?!api/|trpc/|_next/static|_next/image|\\.well-known/|.*\\.(?:ico|png|jpe?g|gif|svg|webp|avif|bmp|txt|xml|json|js|mjs|css|map|woff2?|ttf|otf|eot|webmanifest|pdf|mp4|webm)$).*)",
     ],
 }

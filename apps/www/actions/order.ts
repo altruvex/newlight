@@ -1,27 +1,57 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use server"
 
-import { allowedTransitionsFrom, IllegalTransitionError } from "@repo/database"
-import { transitionOrderWithNotification } from "@/lib/services/order-transitions"
-import { resolveLocale, type Locale } from "@repo/database"
-import type { OrderWithDetails } from "@/types"
-import { currentIdentity, currentUserId } from "@/lib/auth"
+import {
+    allowedTransitionsFrom,
+    IllegalTransitionError,
+    prisma,
+    resolveLocale,
+    SHIPPING_OPTIONS,
+    type Locale,
+} from "@repo/database"
 import { revalidatePath } from "next/cache"
-import { OrderService } from "@/lib/services/order-service"
-import { UserService } from "@/lib/services/user-service"
-import { ProductService } from "@/lib/services/product-service"
-import { generateIdempotencyKey, isValidIdempotencyKey } from "@/lib/idempotency"
-import { prisma } from "@repo/database"
+import { getTranslations } from "next-intl/server"
+import { z } from "zod"
 
+import { currentIdentity, currentUserId } from "@/lib/auth"
+import { generateIdempotencyKey } from "@/lib/idempotency"
+import { logger } from "@/lib/logger"
+import { claimConfiguration, findAccessibleConfiguration } from "@/lib/services/configuration-access"
+import { type OrderErrorCode } from "@/lib/services/order-errors"
+import { OrderService } from "@/lib/services/order-service"
+import { transitionOrderWithNotification } from "@/lib/services/order-transitions"
+import { ProductService } from "@/lib/services/product-service"
+import { UserService } from "@/lib/services/user-service"
+import { getShippingSchema } from "@/lib/validation/shipping"
+import type { OrderWithDetails } from "@/types"
+
+export type OrderActionFailure = {
+    success: false
+    code: OrderErrorCode
+    /** Field-level validation messages, present only for INVALID_INPUT. */
+    errors?: Record<string, string>
+}
+
+export type CreateOrderActionResult =
+    | { success: true; order: { id: string }; orderNumber: string; isDuplicate: boolean }
+    | OrderActionFailure
+
+export type SaveShippingAddressResult = { success: true } | OrderActionFailure
+
+export type CancelOrderActionResult =
+    | { success: true; alreadyApplied: boolean }
+    | (OrderActionFailure & { error?: string })
+
+const createOrderInput = z.object({
+    configId: z.string().min(1).max(64),
+    shippingOption: z.enum(SHIPPING_OPTIONS),
+})
+
+/** The configuration the current visitor may see: their own, or one nobody has claimed yet. */
 export async function getConfigurationDetails(configId: string) {
     try {
-        const configuration = await prisma.productConfiguration.findUnique({
-            where: { id: configId },
-            include: { users: true },
-        })
-        return configuration
+        return await findAccessibleConfiguration(configId, await currentUserId())
     } catch (error) {
-        console.error("Error getting configuration details:", error)
+        logger.error({ err: error, configId }, "failed to load configuration details")
         return null
     }
 }
@@ -30,205 +60,98 @@ export async function getProductWithDetails(sku: string, locale: string) {
     try {
         return await ProductService.getProductBySku(sku, resolveLocale(locale))
     } catch (error) {
-        console.error("Error getting product details:", error)
+        logger.error({ err: error, sku }, "failed to load product details")
         return null
     }
 }
 
-export async function getUserShippingAddress(userId: string) {
+/**
+ * The signed-in customer's shipping address. The optional argument is accepted for callers
+ * that still pass one; it is only ever compared against the session, never trusted.
+ */
+export async function getUserShippingAddress(expectedUserId?: string) {
     try {
-        const address = await UserService.getShippingAddress(userId)
-        return address
+        const userId = await currentUserId()
+        if (!userId || (expectedUserId && expectedUserId !== userId)) return null
+        return await UserService.getShippingAddress(userId)
     } catch (error) {
-        console.error("Error getting shipping address:", error)
+        logger.error({ err: error }, "failed to load shipping address")
         return null
     }
 }
 
-export async function saveShippingAddress(
-    userId: string,
-    data: {
-        fullName: string
-        phone: string
-        email?: string
-        addressLine1: string
-        addressLine2?: string
-        city: string
-        state?: string
-        postalCode: string
-        country?: string
-    }
-) {
-    try {
-        const result = await UserService.saveShippingAddress(userId, data)
+export async function saveShippingAddress(locale: string, input: unknown): Promise<SaveShippingAddressResult> {
+    const userId = await currentUserId()
+    if (!userId) return { success: false, code: "UNAUTHENTICATED" }
 
-        if (result.success) {
-            revalidatePath("/checkout")
+    const parsed = getShippingSchema(locale).safeParse(input)
+    if (!parsed.success) {
+        const errors: Record<string, string> = {}
+        for (const issue of parsed.error.issues) {
+            const field = String(issue.path[0] ?? "form")
+            if (!errors[field]) errors[field] = issue.message
         }
+        return { success: false, code: "INVALID_INPUT", errors }
+    }
 
-        return result
+    try {
+        await UserService.saveShippingAddress(userId, parsed.data)
+        revalidatePath("/checkout")
+        return { success: true }
     } catch (error) {
-        console.error("Error saving shipping address:", error)
-        return { success: false, error: "Failed to save shipping address" }
+        logger.error({ err: error }, "failed to save shipping address")
+        return { success: false, code: "FAILED" }
     }
 }
 
 export async function createOrderFromConfiguration(
     configId: string,
-    shippingOption: "BasicShipping" | "StandardShipping" | "ExpressShipping" = "StandardShipping",
-    clientIdempotencyKey?: string
-) {
+    shippingOption: string = "StandardShipping"
+): Promise<CreateOrderActionResult> {
+    const userId = await currentUserId()
+    if (!userId) return { success: false, code: "UNAUTHENTICATED" }
+
+    const input = createOrderInput.safeParse({ configId, shippingOption })
+    if (!input.success) return { success: false, code: "INVALID_INPUT" }
+
     try {
-        const userId = await currentUserId()
+        // Claim first: claiming bumps `updatedAt`, and the key below is derived from it so that
+        // a refresh or back-button resubmit of the same configuration maps to the same order,
+        // while a configuration edited after ordering can be ordered again.
+        const configuration = await claimConfiguration(input.data.configId, userId)
+        if (!configuration) return { success: false, code: "CONFIG_NOT_FOUND" }
 
-        if (!userId) {
-            return {
-                success: false,
-                error: "Authentication required",
-                requiresAuth: true,
-            }
-        }
-
-        const idempotencyKey = clientIdempotencyKey || generateIdempotencyKey(userId, configId)
-
-        const existingOrder = await prisma.order.findUnique({
-            where: { idempotencyKey },
-            include: {
-                items: true,
-                shippingAddress: true
-            }
-        })
-
-        if (existingOrder) {
-            return {
-                success: true,
-                order: { id: existingOrder.id },
-                orderNumber: existingOrder.orderNumber,
-                isDuplicate: true,
-                existingOrderId: existingOrder.id
-            }
-        }
+        const idempotencyKey = generateIdempotencyKey(
+            userId,
+            configuration.id,
+            configuration.updatedAt.toISOString()
+        )
 
         const shippingAddress = await UserService.getShippingAddress(userId)
-
-        if (!shippingAddress) {
-            return {
-                success: false,
-                error: "Shipping address required",
-                needsShippingAddress: true,
-            }
-        }
-
-        const configuration = await prisma.productConfiguration.findUnique({
-            where: { id: configId },
-            include: { users: true }
-        })
-
-        if (!configuration) {
-            return {
-                success: false,
-                error: "Configuration not found"
-            }
-        }
-
-        const isUserAssociated = configuration.users.some(user => user.id === userId)
-        if (!isUserAssociated) {
-            try {
-                
-                await prisma.productConfiguration.update({
-                    where: { id: configId },
-                    data: {
-                        users: {
-                            connect: { id: userId }
-                        }
-                    }
-                })
-            } catch (error) {
-                console.error("Error associating configuration with user:", error)
-            }
-        }
+        if (!shippingAddress) return { success: false, code: "SHIPPING_ADDRESS_REQUIRED" }
 
         const result = await OrderService.createOrder({
             userId,
-            configurationId: configId,
+            configurationId: configuration.id,
             shippingAddressId: shippingAddress.id,
-            shippingOption,
+            shippingOption: input.data.shippingOption,
             idempotencyKey,
         })
 
-        if (result.success) {
-            revalidatePath("/orders")
-            revalidatePath(`/orders/${result.orderId}`)
+        if (!result.success) return { success: false, code: result.code }
 
-            return {
-                success: true,
-                order: { id: result.orderId },
-                orderNumber: result.orderNumber,
-                isDuplicate: result.isDuplicate,
-            }
-        }
+        revalidatePath("/orders")
+        revalidatePath(`/orders/${result.orderId}`)
 
         return {
-            success: false,
-            error: result.error || "Failed to create order",
+            success: true,
+            order: { id: result.orderId },
+            orderNumber: result.orderNumber,
+            isDuplicate: result.isDuplicate,
         }
-
     } catch (error) {
-        console.error("Order creation error:", error)
-
-        if (error instanceof Error) {
-            if (error.message.includes('Unique constraint') ||
-                error.message.includes('unique_constraint') ||
-                error.message.includes('idempotencyKey')) {
-
-                try {
-                    const userId = await currentUserId()
-                    if (userId) {
-                        const idempotencyKey = generateIdempotencyKey(userId, configId)
-                        const existingOrder = await prisma.order.findUnique({
-                            where: { idempotencyKey }
-                        })
-
-                        if (existingOrder) {
-                            return {
-                                success: true,
-                                order: { id: existingOrder.id },
-                                orderNumber: existingOrder.orderNumber,
-                                isDuplicate: true,
-                                recoveredFromError: true
-                            }
-                        }
-                    }
-                } catch (fetchError) {
-                    console.error("Error fetching existing order:", fetchError)
-                }
-
-                return {
-                    success: false,
-                    error: "Duplicate order detected. Please check your orders.",
-                    isDuplicate: true
-                }
-            }
-
-            if (error.message.includes("Insufficient inventory")) {
-                return {
-                    success: false,
-                    error: "Product is out of stock",
-                }
-            }
-
-            if (error.message.includes("Configuration not found")) {
-                return {
-                    success: false,
-                    error: "Configuration not found",
-                }
-            }
-        }
-
-        return {
-            success: false,
-            error: "Failed to create order. Please try again.",
-        }
+        logger.error({ err: error, configId }, "order creation failed outside the service")
+        return { success: false, code: "FAILED" }
     }
 }
 
@@ -263,7 +186,7 @@ export async function getOrderDetails(orderId: string): Promise<OrderWithDetails
 
         return order
     } catch (error) {
-        console.error("Error getting order details:", error)
+        logger.error({ err: error, orderId }, "failed to load order details")
         return null
     }
 }
@@ -296,7 +219,7 @@ export async function getUserOrders(locale: Locale, page: number = 1, limit: num
             },
         }
     } catch (error) {
-        console.error("Error getting user orders:", error)
+        logger.error({ err: error }, "failed to load order history")
         return {
             success: false,
             error: "Failed to fetch orders",
@@ -305,59 +228,20 @@ export async function getUserOrders(locale: Locale, page: number = 1, limit: num
     }
 }
 
-export async function cancelOrder(orderId: string) {
-    try {
-        const userId = await currentUserId()
-
-        if (!userId) {
-            return {
-                success: false,
-                error: "Authentication required",
-                requiresAuth: true,
-            }
-        }
-
-        return requestOrderCancellation(orderId)
-    } catch (error) {
-        console.error("Order cancellation error:", error)
-
-        if (error instanceof Error) {
-            if (error.message.includes("Order not found")) {
-                return {
-                    success: false,
-                    error: "Order not found",
-                }
-            }
-
-            if (error.message.includes("Order cannot be cancelled")) {
-                return {
-                    success: false,
-                    error: "Order cannot be cancelled at this stage",
-                }
-            }
-        }
-
-        return {
-            success: false,
-            error: "Failed to cancel order",
-        }
-    }
+export async function cancelOrder(orderId: string): Promise<CancelOrderActionResult> {
+    return requestOrderCancellation(orderId)
 }
 
-export async function requestOrderCancellation(orderId: string, reason?: string) {
-    try {
-        const identity = await currentIdentity()
-        if (!identity) {
-            return { success: false, error: "Authentication required", requiresAuth: true }
-        }
+export async function requestOrderCancellation(orderId: string, reason?: string): Promise<CancelOrderActionResult> {
+    const identity = await currentIdentity()
+    if (!identity) return { success: false, code: "UNAUTHENTICATED" }
 
+    try {
         const order = await prisma.order.findFirst({
             where: { id: orderId, userId: identity.id },
             select: { id: true },
         })
-        if (!order) {
-            return { success: false, error: "Order not found" }
-        }
+        if (!order) return await cancellationFailure("ORDER_NOT_FOUND")
 
         const result = await transitionOrderWithNotification({
             orderId,
@@ -372,10 +256,22 @@ export async function requestOrderCancellation(orderId: string, reason?: string)
         return { success: true, alreadyApplied: result.alreadyApplied }
     } catch (error) {
         if (error instanceof IllegalTransitionError) {
-            return { success: false, error: error.message }
+            logger.warn({ orderId, from: error.from, to: error.to }, "customer cancellation refused")
+            return await cancellationFailure("ORDER_NOT_CANCELLABLE")
         }
-        console.error("Order cancellation error:", error)
-        return { success: false, error: "Failed to cancel order" }
+        logger.error({ err: error, orderId }, "order cancellation failed")
+        return await cancellationFailure("FAILED")
+    }
+}
+
+// The cancel button renders `error` when present; give it the translated message for the code
+// rather than the raw cause.
+async function cancellationFailure(code: OrderErrorCode): Promise<CancelOrderActionResult> {
+    try {
+        const t = await getTranslations("confirm.errors")
+        return { success: false, code, error: t(code) }
+    } catch {
+        return { success: false, code }
     }
 }
 
@@ -397,7 +293,7 @@ export async function canCancelOrder(orderId: string): Promise<boolean> {
 
         return allowedTransitionsFrom(order.status, "CUSTOMER").includes("cancelled")
     } catch (error) {
-        console.error("Error checking order cancellation:", error)
+        logger.error({ err: error, orderId }, "failed to check cancellability")
         return false
     }
 }
@@ -413,40 +309,7 @@ export async function getUserOrderStats() {
         const stats = await UserService.getUserStats(userId)
         return stats
     } catch (error) {
-        console.error("Error getting order stats:", error)
-        return null
-    }
-}
-
-export async function clearIdempotencyCache(key: string) {
-    try {
-        const userId = await currentUserId()
-
-        if (!userId) {
-            return { success: false, error: "Unauthorized" }
-        }
-
-        return { success: true }
-    } catch (error) {
-        console.error("Error clearing cache:", error)
-        return { success: false, error: "Failed to clear cache" }
-    }
-}
-
-export async function getCacheStats() {
-    try {
-        const userId = await currentUserId()
-
-        if (!userId) {
-            return null
-        }
-
-        return {
-            idempotencyCacheSize: 0,
-            rateLimitMapSize: 0
-        }
-    } catch (error) {
-        console.error("Error getting cache stats:", error)
+        logger.error({ err: error }, "failed to load order stats")
         return null
     }
 }

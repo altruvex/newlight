@@ -50,10 +50,10 @@ describe("authorizeCron", () => {
         expect(denied).toBeNull()
     })
 
-    it("accepts the query form used for a manual run during an incident", async () => {
+    it("rejects the secret in the query string even when it is right", async () => {
         process.env[SECRET_NAME] = "right"
         const denied = authorizeCron(get("https://newlight-eg.com/api/cron/sweep?secret=right"), SECRET_NAME, "test")
-        expect(denied).toBeNull()
+        expect(denied?.status).toBe(401)
     })
 
     it("ignores the query form once an Authorization header is present", async () => {

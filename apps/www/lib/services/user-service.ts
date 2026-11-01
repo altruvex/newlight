@@ -179,7 +179,7 @@ export class UserService {
 
         return {
             orderCount,
-            totalSpent: totalSpent._sum.total || 0,
+            totalSpent: serializeMoney(totalSpent._sum.total ?? 0),
             statusCounts,
         }
     }

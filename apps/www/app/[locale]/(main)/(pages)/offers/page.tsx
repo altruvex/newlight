@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { encodeSlug, numericLocale, resolveLocale } from "@repo/database"
 
 import { Container, PageHeader, Section, SectionHeader } from "@/components/layout/section"
@@ -13,7 +13,8 @@ import { stockStatusOfLevels } from "@/lib/stock"
 
 export const revalidate = 900
 
-export async function generateMetadata(): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+    setRequestLocale((await params).locale)
     const locale = resolveLocale(await getLocale())
     const t = await getTranslations("offers")
 
@@ -25,7 +26,8 @@ export async function generateMetadata(): Promise<Metadata> {
     })
 }
 
-export default async function OffersPage() {
+export default async function OffersPage({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const locale = resolveLocale(await getLocale())
     const t = await getTranslations("offers")
     const offers = await allOffers(locale)

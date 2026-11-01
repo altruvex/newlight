@@ -2,9 +2,10 @@ import TechnicalResources from "@/components/technical-resources";
 import { constructMetadata } from "@/lib/metadata";
 import { createPageCanonicalUrl } from "@/lib/canonical-url"
 import { SupportedLanguage } from "@/types";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server";
 
-export async function generateMetadata() {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("metadatas.technical-resources");
     const locale = await getLocale() as SupportedLanguage
     return constructMetadata({
@@ -15,6 +16,7 @@ export async function generateMetadata() {
     });
 }
 
-export default async function TechnicalPage() {
+export default async function TechnicalPage({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     return <TechnicalResources />
 }

@@ -1,4 +1,4 @@
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { resolveLocale } from "@repo/database"
 
 import { Footer } from "@/components/navigation/footer"
@@ -7,7 +7,20 @@ import { OffersBar } from "@/components/offers-bar"
 import { offersHighlight } from "@/lib/services/offers-service"
 import { JsonLd, organisationSchema, webSiteSchema } from "@/lib/structured-data"
 
-export default async function MainLayout({ children }: { children: React.ReactNode }) {
+// The offers bar and the footer's section list are read from the database on every page
+// below, so no page here may be cached longer than this. Admin edits purge sooner through
+// /api/revalidate; this ceiling covers what no admin action announces (an offer's window
+// opening or closing, stock moved by orders).
+export const revalidate = 900
+
+export default async function MainLayout({
+    children,
+    params,
+}: {
+    children: React.ReactNode
+    params: Promise<{ locale: string }>
+}) {
+    setRequestLocale((await params).locale)
     const [t, offers, locale] = await Promise.all([
         getTranslations("Common"),
         offersHighlight(),

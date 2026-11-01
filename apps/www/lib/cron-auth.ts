@@ -7,9 +7,10 @@ export function authorizeCron(request: NextRequest, secretName: string, logTag: 
         return NextResponse.json({ error: "not configured" }, { status: 503 })
     }
 
+    // Bearer header only: a secret in the query string lands in access logs and browser history.
     const header = request.headers.get("authorization")
-    const provided = header?.startsWith("Bearer ") ? header.slice(7) : request.nextUrl.searchParams.get("secret")
-    if (provided !== secret) {
+    const provided = header?.startsWith("Bearer ") ? header.slice(7) : null
+    if (provided === null || provided !== secret) {
         return NextResponse.json({ error: "unauthorized" }, { status: 401 })
     }
 

@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { revalidatePath, revalidateTag } from "next/cache"
-import { LOCALES } from "@repo/database"
+import { revalidatePath } from "next/cache"
 
 export const dynamic = "force-dynamic"
 
@@ -30,41 +29,33 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "invalid body" }, { status: 400 })
     }
 
+    // Next 16 tags each cached page with its route *pattern* (`/[locale]/(main)/layout`), not
+    // with the concrete URL plus "layout", so `revalidatePath("/en", "layout")` matched nothing
+    // and `revalidateTag` hit tags no fetch in this app sets. Purging by pattern is what reaches
+    // the ISR cache. A product or taxonomy edit purges every storefront page, not one URL: the
+    // offers bar, the footer's subcategory list, the home strips and related products all show
+    // names and prices on pages other than the product's own.
     const revalidated: string[] = []
+    const purge = (pattern: string) => {
+        revalidatePath(pattern, "layout")
+        revalidated.push(`${pattern} (layout)`)
+    }
 
     switch (target.kind) {
-        case "product": {
-            revalidateTag(`product:${target.slug}`, "max")
-            revalidated.push(`tag product:${target.slug}`)
-            for (const locale of LOCALES) {
-                if (target.categorySlug && target.subCategorySlug) {
-                    const path = `/${locale}/category/${target.categorySlug}/${target.subCategorySlug}/${target.slug}`
-                    revalidatePath(path)
-                    revalidated.push(path)
-                }
-            }
-            break
-        }
+        case "product":
         case "category":
-        case "subCategory": {
-            revalidateTag("taxonomy", "max")
-            revalidated.push("tag taxonomy")
-            for (const locale of LOCALES) {
-                revalidatePath(`/${locale}/category`, "layout")
-                revalidated.push(`/${locale}/category (layout)`)
-            }
+        case "subCategory":
+            purge("/[locale]/(main)")
             break
-        }
-        case "all": {
-            for (const locale of LOCALES) {
-                revalidatePath(`/${locale}`, "layout")
-                revalidated.push(`/${locale} (layout)`)
-            }
+        case "all":
+            purge("/[locale]")
             break
-        }
         default:
             return NextResponse.json({ error: "unknown target kind" }, { status: 400 })
     }
+
+    revalidatePath("/sitemap.xml")
+    revalidated.push("/sitemap.xml")
 
     return NextResponse.json({ revalidated, at: new Date().toISOString() })
 }

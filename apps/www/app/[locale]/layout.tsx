@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { SupportedLanguage } from "@/types";
 import { Metadata } from "next";
 import { NextIntlClientProvider, hasLocale } from 'next-intl';
+import { setRequestLocale } from 'next-intl/server';
 import { Inter, Playfair_Display, Almarai } from "next/font/google";
 import { notFound } from "next/navigation";
 import "../globals.css";
@@ -30,6 +31,13 @@ const almarai = Almarai({
   display: "swap",
   variable: "--font-almarai",
 })
+
+// Both locales are known at build time. Declaring them (and calling setRequestLocale below)
+// lets next-intl take the locale from the URL instead of reading request headers, which is
+// what allows the pages beneath this layout to be statically rendered and cached.
+export function generateStaticParams() {
+  return routing.locales.map((locale) => ({ locale }))
+}
 
 export async function generateMetadata({
   params
@@ -77,6 +85,8 @@ export default async function RootLayout({
   if (!hasLocale(routing.locales, locale)) {
     notFound();
   }
+  setRequestLocale(locale)
+
   return (
       <html lang={locale} suppressHydrationWarning dir={locale === "ar" ? "rtl" : "ltr"} className={cn(inter.variable, playfair.variable, almarai.variable)}>
         <body className="overflow-x-hidden scroll-smooth selection:bg-primary/20" suppressHydrationWarning>

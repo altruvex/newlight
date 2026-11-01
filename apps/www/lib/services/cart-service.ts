@@ -84,6 +84,10 @@ export class CartService {
     }): Promise<{ success: boolean; cartItem: CartItem }> {
         const { userId, productId, quantity, selectedColorTemp, selectedColorKey } = params
 
+        if (!Number.isInteger(quantity) || quantity < 1) {
+            throw new Error("INVALID_QUANTITY")
+        }
+
         return await prisma.$transaction(async (tx) => {
             const product = await tx.product.findUnique({
                 where: { productId },

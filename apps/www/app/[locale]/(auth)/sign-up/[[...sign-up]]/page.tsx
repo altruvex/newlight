@@ -1,6 +1,6 @@
 import { Suspense } from "react"
 import type { Metadata } from "next"
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { resolveLocale } from "@repo/database"
 
 import { AuthSplit } from "@/components/auth/auth-split"
@@ -8,7 +8,14 @@ import { ThemedSignUp } from "@/components/themed-sign-up"
 import { constructMetadata } from "@/lib/metadata"
 import { createPageCanonicalUrl } from "@/lib/canonical-url"
 
-export async function generateMetadata(): Promise<Metadata> {
+// No catch-all segments are prebuilt; the bare page renders on its first visit per locale
+// and is then served from cache (it reads no request data).
+export function generateStaticParams() {
+    return []
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("auth")
     const locale = resolveLocale(await getLocale())
     return constructMetadata({
@@ -21,7 +28,8 @@ export async function generateMetadata(): Promise<Metadata> {
     })
 }
 
-export default async function SignUpPage() {
+export default async function SignUpPage({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("auth")
 
     return (

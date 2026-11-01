@@ -5,21 +5,26 @@ import {
     DEFAULT_LOCATION_ID,
     encodeSlug,
     getShippingRates,
+    InsufficientStockError,
     Prisma,
     prisma,
     multiplyMoney,
-    release,
     reserve,
     resolveEffectivePrice,
     resolveLocale,
     serializeMoney,
+    type ShippingOption,
 } from "@repo/database"
 import type { Locale } from "@repo/database"
 import { activeDiscounts } from "@/lib/discounts"
+import { dispatchDeliveriesAfterResponse } from "@/lib/deliveries"
+import { logger } from "@/lib/logger"
+import { OrderError, type OrderErrorCode } from "@/lib/services/order-errors"
+import { isUniqueViolationOn, withSerializableRetry } from "@/lib/services/transaction-retry"
 import { queueMail } from "@repo/mail/outbox"
-import { adminRecipients, dispatchPushSoon, notifyRecipients } from "@repo/notifications"
+import { adminRecipients, notifyRecipients } from "@repo/notifications"
 
-type CreateOrderResult =
+export type CreateOrderResult =
     | {
         success: true
         orderId: string
@@ -28,29 +33,20 @@ type CreateOrderResult =
     }
     | {
         success: false
-        error: string
+        code: OrderErrorCode
     }
 
-type CancelOrderResult =
-    | {
-        success: true
-        order?: any
-    }
-    | {
-        success: false
-        error: string
-    }
+const CREATE_ORDER_ATTEMPTS = 3
 
 export class OrderService {
     static async createOrder(params: {
         userId: string
         configurationId: string
         shippingAddressId: string
-        shippingOption: "BasicShipping" | "StandardShipping" | "ExpressShipping"
+        shippingOption: ShippingOption
         idempotencyKey: string
     }): Promise<CreateOrderResult> {
-        const { userId, configurationId, shippingAddressId, shippingOption, idempotencyKey } =
-            params
+        const { userId, configurationId, shippingOption, idempotencyKey } = params
 
         try {
             const existingOrder = await this.findOrderByIdempotencyKey(userId, idempotencyKey)
@@ -65,193 +61,224 @@ export class OrderService {
 
             const recipients = await adminRecipients(prisma)
 
-            const result = await prisma.$transaction(
-                async (tx) => {
-                    const config = await tx.productConfiguration.findUnique({
-                        where: { id: configurationId },
-                    })
-
-                    if (!config) {
-                        throw new Error("Configuration not found")
-                    }
-
-                    const product = await tx.product.findUnique({
-                        where: { id: config.productId },
-                        include: {
-                            translations: { where: { locale: resolveLocale(undefined) }, take: 1 },
-                            images: { orderBy: { order: "asc" }, take: 1 },
-                        },
-                    })
-
-                    if (!product) {
-                        throw new Error("Product not found")
-                    }
-
-                    const level = await tx.stockLevel.findUnique({
-                        where: { productId_locationId: { productId: product.id, locationId: DEFAULT_LOCATION_ID } },
-                        select: { onHand: true, reserved: true },
-                    })
-                    if (Math.max(0, (level?.onHand ?? 0) - (level?.reserved ?? 0)) < config.quantity) {
-                        throw new Error("Insufficient inventory")
-                    }
-
-                    const shippingRates = await getShippingRates(tx)
-                    const shippingCost = shippingRates[shippingOption]
-
-                    const unitPrice = resolveEffectivePrice(
-                        product.price,
-                        product,
-                        await activeDiscounts()
-                    ).effective
-                    const subtotal = multiplyMoney(unitPrice, config.quantity)
-                    const total = addMoney(subtotal, shippingCost)
-
-                    const orderNumber = await this.generateOrderNumber(tx)
-
-                    const order = await tx.order.create({
-                        data: {
-                            userId,
-                            orderNumber,
-                            subtotal,
-                            shippingCost,
-                            total,
-                            idempotencyKey,
-                            status: "awaiting_shipment",
-                            shippingOption,
-                            shippingAddressId,
-                            configurationId,
-                            customerNotes: `idempotency:${idempotencyKey}`,
-                            items: {
-                                create: {
-                                    productId: product.id,
-                                    productName: product.translations[0]?.name || product.productId,
-                                    productImage: product.images[0]?.url ?? "",
-                                    price: unitPrice,
-                                    quantity: config.quantity,
-                                    selectedColorTemp: config.selectedColorTemp as any,
-                                    selectedColorKey: config.selectedColorKey,
-                                    configurationId,
-                                },
-                            },
-                        },
-                    })
-
-                    await reserve(tx, product.id, config.quantity)
-
-                    const [customer, address] = await Promise.all([
-                        tx.user.findUnique({
-                            where: { id: userId },
-                            select: { email: true, name: true, preferredLanguage: true },
-                        }),
-                        shippingAddressId
-                            ? tx.shippingAddress.findUnique({ where: { id: shippingAddressId } })
-                            : Promise.resolve(null),
-                    ])
-
-                    if (customer?.email && address) {
-                        const locale = resolveLocale(customer.preferredLanguage)
-
-                        const details = await describeOrderedProduct(tx, {
-                            productId: product.id,
-                            locale,
-                            selectedColorTemp: config.selectedColorTemp,
-                            selectedColorKey: config.selectedColorKey,
-                            fallbackName: product.translations[0]?.name || product.productId,
-                            fallbackSku: product.productId,
-                        })
-
-                        await queueMail(tx, {
-                            template: "order-confirmation",
-                            to: customer.email,
-                            locale,
-                            payload: {
-                                orderNumber: order.orderNumber,
-                                items: [
-                                    {
-                                        name: details.name,
-                                        quantity: config.quantity,
-                                        price: serializeMoney(unitPrice),
-                                        lineTotal: serializeMoney(subtotal),
-                                        sku: details.sku,
-                                        imageUrl: details.imageUrl,
-                                        productUrl: details.productUrl,
-                                        attributes: details.attributes,
-                                    },
-                                ],
-                                subtotal: serializeMoney(subtotal),
-                                shippingCost: serializeMoney(shippingCost),
-                                total: serializeMoney(total),
-                                currency: config.currency ?? "EGP",
-                                address: {
-                                    fullName: address.fullName,
-                                    phone: address.phone,
-                                    addressLine1: address.addressLine1,
-                                    addressLine2: address.addressLine2 ?? undefined,
-                                    city: address.city,
-                                    country: address.country,
-                                },
-                                orderUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/${locale}/orders/${order.id}`,
-                            },
-                            dedupeKey: `order-confirmation:${order.id}`,
-                        })
-                    } else {
-                        console.warn(`[order] no confirmation queued for ${order.orderNumber}: missing customer email or address`)
-                    }
-
-                    await notifyRecipients(tx, recipients, {
-                        type: "NEW_ORDER",
-                        title: `New order ${order.orderNumber}`,
-                        message: `${serializeMoney(total)} ${config.currency ?? "EGP"} · ${config.quantity} × ${product.translations[0]?.name || product.productId}`,
-                        actionUrl: `/admin/orders/${order.id}`,
-                        priority: "HIGH",
-                        metadata: {
-                            orderId: order.id,
-                            orderNumber: order.orderNumber,
-                            total: serializeMoney(total),
-                            currency: config.currency ?? "EGP",
-                            productId: product.id,
-                        },
-                    })
-
-                    return {
-                        success: true as const,
-                        orderId: order.id,
-                        orderNumber: order.orderNumber,
-                        isDuplicate: false,
-                    }
-                },
+            const result = await withSerializableRetry(
+                () =>
+                    prisma.$transaction(
+                        (tx) => this.createOrderInTransaction(tx, { ...params, recipients }),
+                        {
+                            maxWait: 15000,
+                            timeout: 30000,
+                            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+                        }
+                    ),
                 {
-                    maxWait: 15000,
-                    timeout: 30000,
-                    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+                    attempts: CREATE_ORDER_ATTEMPTS,
+                    onRetry: (attempt, error) =>
+                        logger.warn({ err: error, attempt, configurationId }, "order transaction serialization conflict; retrying"),
                 }
             )
 
-            dispatchPushSoon(prisma)
+            dispatchDeliveriesAfterResponse("order-created")
 
             return result
         } catch (error) {
-            console.error("Order creation error:", error)
-
-            if (error instanceof Error) {
-                return {
-                    success: false,
-                    error: error.message,
+            if (isUniqueViolationOn(error, "idempotencyKey")) {
+                // A concurrent attempt with the same key won the race: that order is this one.
+                const existingOrder = await this.findOrderByIdempotencyKey(userId, idempotencyKey)
+                if (existingOrder) {
+                    return {
+                        success: true,
+                        orderId: existingOrder.id,
+                        orderNumber: existingOrder.orderNumber,
+                        isDuplicate: true,
+                    }
                 }
             }
 
-            return {
-                success: false,
-                error: "Failed to create order",
+            if (error instanceof OrderError) {
+                logger.warn({ code: error.code, configurationId, shippingOption }, "order creation refused")
+                return { success: false, code: error.code }
             }
+            if (error instanceof InsufficientStockError) {
+                logger.warn({ configurationId, requested: error.requested, available: error.available }, "order creation refused: out of stock")
+                return { success: false, code: "OUT_OF_STOCK" }
+            }
+
+            logger.error({ err: error, configurationId, shippingOption }, "order creation failed")
+            return { success: false, code: "FAILED" }
+        }
+    }
+
+    private static async createOrderInTransaction(
+        tx: Prisma.TransactionClient,
+        params: {
+            userId: string
+            configurationId: string
+            shippingAddressId: string
+            shippingOption: ShippingOption
+            idempotencyKey: string
+            recipients: readonly string[]
+        }
+    ) {
+        const { userId, configurationId, shippingAddressId, shippingOption, idempotencyKey, recipients } = params
+
+        const config = await tx.productConfiguration.findUnique({
+            where: { id: configurationId },
+        })
+
+        if (!config) {
+            throw new OrderError("CONFIG_NOT_FOUND")
+        }
+
+        const product = await tx.product.findUnique({
+            where: { id: config.productId },
+            include: {
+                translations: { where: { locale: resolveLocale(undefined) }, take: 1 },
+                images: { orderBy: { order: "asc" }, take: 1 },
+            },
+        })
+
+        if (!product) {
+            throw new OrderError("PRODUCT_NOT_FOUND")
+        }
+
+        const level = await tx.stockLevel.findUnique({
+            where: { productId_locationId: { productId: product.id, locationId: DEFAULT_LOCATION_ID } },
+            select: { onHand: true, reserved: true },
+        })
+        if (Math.max(0, (level?.onHand ?? 0) - (level?.reserved ?? 0)) < config.quantity) {
+            throw new OrderError("OUT_OF_STOCK")
+        }
+
+        const shippingRates = await getShippingRates(tx)
+        const shippingCost = shippingRates[shippingOption]
+
+        const unitPrice = resolveEffectivePrice(
+            product.price,
+            product,
+            await activeDiscounts()
+        ).effective
+        const subtotal = multiplyMoney(unitPrice, config.quantity)
+        const total = addMoney(subtotal, shippingCost)
+
+        const orderNumber = await this.generateOrderNumber(tx)
+
+        const order = await tx.order.create({
+            data: {
+                userId,
+                orderNumber,
+                subtotal,
+                shippingCost,
+                total,
+                idempotencyKey,
+                status: "awaiting_shipment",
+                shippingOption,
+                shippingAddressId,
+                configurationId,
+                customerNotes: `idempotency:${idempotencyKey}`,
+                items: {
+                    create: {
+                        productId: product.id,
+                        productName: product.translations[0]?.name || product.productId,
+                        productImage: product.images[0]?.url ?? "",
+                        price: unitPrice,
+                        quantity: config.quantity,
+                        selectedColorTemp: config.selectedColorTemp as any,
+                        selectedColorKey: config.selectedColorKey,
+                        configurationId,
+                    },
+                },
+            },
+        })
+
+        await reserve(tx, product.id, config.quantity)
+
+        const [customer, address] = await Promise.all([
+            tx.user.findUnique({
+                where: { id: userId },
+                select: { email: true, name: true, preferredLanguage: true },
+            }),
+            shippingAddressId
+                ? tx.shippingAddress.findUnique({ where: { id: shippingAddressId } })
+                : Promise.resolve(null),
+        ])
+
+        if (customer?.email && address) {
+            const locale = resolveLocale(customer.preferredLanguage)
+
+            const details = await describeOrderedProduct(tx, {
+                productId: product.id,
+                locale,
+                selectedColorTemp: config.selectedColorTemp,
+                selectedColorKey: config.selectedColorKey,
+                fallbackName: product.translations[0]?.name || product.productId,
+                fallbackSku: product.productId,
+            })
+
+            await queueMail(tx, {
+                template: "order-confirmation",
+                to: customer.email,
+                locale,
+                payload: {
+                    orderNumber: order.orderNumber,
+                    items: [
+                        {
+                            name: details.name,
+                            quantity: config.quantity,
+                            price: serializeMoney(unitPrice),
+                            lineTotal: serializeMoney(subtotal),
+                            sku: details.sku,
+                            imageUrl: details.imageUrl,
+                            productUrl: details.productUrl,
+                            attributes: details.attributes,
+                        },
+                    ],
+                    subtotal: serializeMoney(subtotal),
+                    shippingCost: serializeMoney(shippingCost),
+                    total: serializeMoney(total),
+                    currency: config.currency ?? "EGP",
+                    address: {
+                        fullName: address.fullName,
+                        phone: address.phone,
+                        addressLine1: address.addressLine1,
+                        addressLine2: address.addressLine2 ?? undefined,
+                        city: address.city,
+                        country: address.country,
+                    },
+                    orderUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/${locale}/orders/${order.id}`,
+                },
+                dedupeKey: `order-confirmation:${order.id}`,
+            })
+        } else {
+            logger.warn({ orderNumber: order.orderNumber }, "no confirmation queued: missing customer email or address")
+        }
+
+        await notifyRecipients(tx, recipients, {
+            type: "NEW_ORDER",
+            title: `New order ${order.orderNumber}`,
+            message: `${serializeMoney(total)} ${config.currency ?? "EGP"} · ${config.quantity} × ${product.translations[0]?.name || product.productId}`,
+            actionUrl: `/admin/orders/${order.id}`,
+            priority: "HIGH",
+            metadata: {
+                orderId: order.id,
+                orderNumber: order.orderNumber,
+                total: serializeMoney(total),
+                currency: config.currency ?? "EGP",
+                productId: product.id,
+            },
+        })
+
+        return {
+            success: true as const,
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            isDuplicate: false,
         }
     }
 
     private static async findOrderByIdempotencyKey(userId: string, idempotencyKey: string) {
-        return await prisma.order.findUnique({
-            where: {
-                idempotencyKey,
-            },
+        return await prisma.order.findFirst({
+            where: { idempotencyKey, userId },
             select: { id: true, orderNumber: true, userId: true },
         })
     }

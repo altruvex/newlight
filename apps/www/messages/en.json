@@ -906,6 +906,7 @@
   },
   "section-type-page": {
     "noProducts": "No products available in this category",
+    "noProductsBody": "Nothing is listed in this section yet. Browse the rest of the category.",
     "productCount": "{count} {count, plural, =1 {product} other {products}}",
     "products": "products",
     "product": "product",
@@ -999,7 +1000,22 @@
     "addressPlaceholder": "Enter your address",
     "cityPlaceholder": "Enter your city",
     "statePlaceholder": "Enter your state/province",
-    "postalCodePlaceholder": "Enter your postal code"
+    "postalCodePlaceholder": "Enter your postal code",
+    "duplicateTitle": "Order already placed",
+    "duplicateBody": "Taking you to your order…",
+    "addressFailedTitle": "Could not save address",
+    "orderFailedTitle": "Could not place order",
+    "errors": {
+      "UNAUTHENTICATED": "Please sign in to continue.",
+      "INVALID_INPUT": "Some details are missing or invalid. Please check the form.",
+      "CONFIG_NOT_FOUND": "This configuration could not be found. Please build it again.",
+      "PRODUCT_NOT_FOUND": "This product is no longer available.",
+      "OUT_OF_STOCK": "This product is out of stock right now.",
+      "SHIPPING_ADDRESS_REQUIRED": "Please add a shipping address first.",
+      "ORDER_NOT_FOUND": "Order not found.",
+      "ORDER_NOT_CANCELLABLE": "This order can no longer be cancelled.",
+      "FAILED": "Something went wrong. Please try again."
+    }
   },
   "complete": {
     "orderConfirmed": "Order Confirmed!",

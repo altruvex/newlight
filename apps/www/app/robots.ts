@@ -8,7 +8,22 @@ export default function robots(): MetadataRoute.Robots {
             {
                 userAgent: "*",
                 allow: "/",
-                disallow: ["/api/", "/*/preview/", "/*/confirm/", "/*/complete/", "/*/sign-in", "/*/sign-up", "/*/reset-password"],
+                // Per-visitor and query-driven pages: nothing to index, and every crawl of
+                // one is a server render.
+                disallow: [
+                    "/api/",
+                    "/*/api/",
+                    "/*/search",
+                    "/*/cart",
+                    "/*/account",
+                    "/*/orders",
+                    "/*/preview/",
+                    "/*/confirm",
+                    "/*/complete",
+                    "/*/sign-in",
+                    "/*/sign-up",
+                    "/*/reset-password",
+                ],
             },
         ],
         sitemap: `${base}/sitemap.xml`,

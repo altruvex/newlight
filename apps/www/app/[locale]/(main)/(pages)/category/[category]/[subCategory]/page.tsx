@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
+import { cache } from "react"
 import { JsonLd, breadcrumbSchema, itemListSchema } from "@/lib/structured-data"
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { notFound, permanentRedirect } from "next/navigation"
 import { encodeSlug, resolveLocale, type Locale } from "@repo/database"
 import { CategoryService } from "@/lib/services/category-service"
@@ -11,12 +12,13 @@ import { createSubCategoryCanonicalUrl } from "@/lib/canonical-url"
 import { allTaxonomyPaths, alternateCategorySlug, alternateSubCategorySlug } from "@/lib/services/taxonomy"
 import SubCategoryPage from "./sub-category-page"
 
-export const revalidate = 7200
+export const revalidate = 900
 
 type Props = { params: Promise<{ category: string; subCategory: string; locale: string }> }
 
-async function load(params: Props["params"]) {
-    const { category, subCategory } = await params
+// generateMetadata and the page both need this; cache() lets the second call reuse the
+// first one's queries within a render instead of running them again.
+const loadCached = cache(async (category: string, subCategory: string) => {
     const locale = resolveLocale(await getLocale())
     const categorySlug = decodeURIComponent(category)
     const subCategorySlug = decodeURIComponent(subCategory)
@@ -36,6 +38,12 @@ async function load(params: Props["params"]) {
         CategoryService.getSubCategories(locale, categorySlug),
     ])
     return { view, locale, categorySlug, offer, siblings }
+})
+
+async function load(params: Props["params"]) {
+    const resolved = await params
+    setRequestLocale(resolved.locale)
+    return loadCached(resolved.category, resolved.subCategory)
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {

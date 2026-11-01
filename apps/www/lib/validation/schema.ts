@@ -33,6 +33,14 @@ export const removeCartItemSchema = z.object({
 
 export type RemoveCartItemInput = z.infer<typeof removeCartItemSchema>
 
+export const updateCartItemOptionsSchema = z.object({
+    itemId: z.string().min(1, "Item ID is required"),
+    selectedColorTemp: z.enum(["WARM_3000K", "COOL_4000K", "WHITE_6500K"]).nullable().optional(),
+    selectedColorKey: z.string().min(1).max(50).nullable().optional(),
+})
+
+export type UpdateCartItemOptionsInput = z.infer<typeof updateCartItemOptionsSchema>
+
 export const shippingAddressSchema = z.object({
     fullName: z.string().regex(/^[\u0621-\u064Aa-zA-Z\s]+$/).min(2, "Full name must be at least 2 characters"),
     phone: z.string().regex(/^[\+]?[0-9]{10,15}$/).min(10, "Phone number must be at least 10 characters"),

@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup } from "@/components/ui/radio-group"
 import { useRouter } from "@/i18n/navigation"
-import { generateSessionKey } from "@/lib/idempotency"
 import { getShippingSchema, type ShippingAddressFormData } from "@/lib/validation/shipping"
 import { ConfirmFormProps, ShippingOption } from "@/types"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -49,15 +48,13 @@ export function ConfirmForm({
     const router = useRouter()
     const locale = useLocale()
     const ts = useTranslations("shipping")
+    const tc = useTranslations("confirm")
     const [isPending, startTransition] = useTransition()
     const [shippingOption, setShippingOption] = useState<ShippingOption>("StandardShipping")
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     const submitAttemptRef = useRef(0)
     const abortControllerRef = useRef<AbortController | null>(null)
-    const idempotencyKeyRef = useRef<string>(
-        generateSessionKey(userId, configId)
-    )
 
     const {
         register,
@@ -136,7 +133,7 @@ export function ConfirmForm({
 
         startTransition(async () => {
             try {
-                const addressPromise = saveShippingAddress(userId, data)
+                const addressPromise = saveShippingAddress(locale, data)
                 const timeoutPromise = new Promise((_, reject) =>
                     setTimeout(() => reject(new Error('Request timeout')), 30000)
                 )
@@ -148,24 +145,14 @@ export function ConfirmForm({
 
                 if (!addressResult.success) {
                     setIsSubmitting(false)
-                    const errorMsg = 'error' in addressResult ? addressResult.error : null;
-                    toast.error(
-                        isArabic ? "فشل في حفظ العنوان" : "Failed to save address",
-                        {
-                            description: errorMsg || (isArabic
-                                ? "يرجى المحاولة مرة أخرى"
-                                : "Please try again"
-                            ),
-                        }
-                    )
+                    const fieldError = addressResult.errors ? Object.values(addressResult.errors)[0] : undefined
+                    toast.error(tc("addressFailedTitle"), {
+                        description: fieldError ?? tc(`errors.${addressResult.code}`),
+                    })
                     return
                 }
 
-                const orderPromise = createOrderFromConfiguration(
-                    configId,
-                    shippingOption,
-                    idempotencyKeyRef.current
-                )
+                const orderPromise = createOrderFromConfiguration(configId, shippingOption)
 
                 const orderTimeoutPromise = new Promise((_, reject) =>
                     setTimeout(() => reject(new Error('Order creation timeout')), 30000)
@@ -178,36 +165,18 @@ export function ConfirmForm({
 
                 if (!orderResult.success) {
                     setIsSubmitting(false)
-                    const errorMsg = 'error' in orderResult ? orderResult.error : null;
+                    toast.error(tc("orderFailedTitle"), {
+                        description: tc(`errors.${orderResult.code}`),
+                    })
+                    return
+                }
 
-                    if (errorMsg?.includes('duplicate') || errorMsg?.includes('already exists')) {
-                        toast.info(
-                            isArabic ? "الطلب موجود بالفعل" : "Order already exists",
-                            {
-                                description: isArabic
-                                    ? "سيتم تحويلك إلى صفحة الاكمال "
-                                    : "Redirecting to completing page"
-                            }
-                        )
-
-                        const orderId = 'order' in orderResult ? orderResult.order?.id : null;
-                        if (orderId) {
-                            setTimeout(() => {
-                                router.push(`/complete/${configId}?orderId=${orderId}`)
-                            }, 1000)
-                        }
-                        return
-                    }
-
-                    toast.error(
-                        isArabic ? "فشل في إنشاء الطلب" : "Failed to create order",
-                        {
-                            description: errorMsg || (isArabic
-                                ? "حدث خطأ، يرجى المحاولة مرة أخرى"
-                                : "An error occurred, please try again"
-                            ),
-                        }
-                    )
+                if (orderResult.isDuplicate) {
+                    // A refresh or back-button resubmit: the order already exists, so go to it.
+                    toast.info(tc("duplicateTitle"), { description: tc("duplicateBody") })
+                    setTimeout(() => {
+                        router.push(`/complete/${configId}?orderId=${orderResult.order.id}`)
+                    }, 1000)
                     return
                 }
 
@@ -222,9 +191,8 @@ export function ConfirmForm({
 
                 window.history.pushState(null, '', window.location.href)
 
-                const orderId = 'order' in orderResult ? orderResult.order?.id : null;
                 setTimeout(() => {
-                    router.push(`/complete/${configId}?orderId=${orderId}`)
+                    router.push(`/complete/${configId}?orderId=${orderResult.order.id}`)
                 }, 1500)
 
             } catch (err) {

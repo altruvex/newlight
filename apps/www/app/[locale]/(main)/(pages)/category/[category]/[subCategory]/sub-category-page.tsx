@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils"
 import { encodeSlug, resolveLocale } from "@repo/database"
 import { useLocale, useTranslations } from "next-intl"
 import { useSearchParams } from "next/navigation"
-import { useMemo } from "react"
+import { Suspense, useMemo } from "react"
 
 type SubCategoryView = NonNullable<Awaited<ReturnType<typeof CategoryService.getProductsWithUniqueVariants>>>
 
@@ -32,13 +32,33 @@ interface SubCategoryPageProps {
     siblings?: Array<{ id: string; name: string; slug: string }>
 }
 
-export default function SectionTypePage({ subCategory, categorySlug, siblings = [] }: SubCategoryPageProps) {
+// The page is statically rendered, and the URL's query string only exists in the browser.
+// The server HTML is therefore the unfiltered listing — exactly what a visitor without a
+// filter query sees — and the browser swaps in the URL's filters once it can read them.
+export default function SectionTypePage(props: SubCategoryPageProps) {
+    return (
+        <Suspense fallback={<SectionTypeView {...props} searchParams={null} />}>
+            <SectionTypeWithParams {...props} />
+        </Suspense>
+    )
+}
+
+function SectionTypeWithParams(props: SubCategoryPageProps) {
+    const searchParams = useSearchParams()
+    return <SectionTypeView {...props} searchParams={searchParams} />
+}
+
+function SectionTypeView({
+    subCategory,
+    categorySlug,
+    siblings = [],
+    searchParams,
+}: SubCategoryPageProps & { searchParams: { toString(): string } | null }) {
     const t = useTranslations("section-type-page")
     const tm = useTranslations("merchandising")
     const locale = resolveLocale(useLocale())
     const router = useRouter()
     const pathname = usePathname()
-    const searchParams = useSearchParams()
 
     const subCategoryTranslation = subCategory.translations[0]
     const categoryTranslation = subCategory.category.translations[0]
@@ -47,7 +67,7 @@ export default function SectionTypePage({ subCategory, categorySlug, siblings = 
     const subCategorySlug = subCategoryTranslation?.slug ?? ""
 
     const filters: ListingFilters = useMemo(
-        () => filtersFromParams(new URLSearchParams(searchParams.toString())),
+        () => filtersFromParams(new URLSearchParams(searchParams?.toString() ?? "")),
         [searchParams]
     )
 

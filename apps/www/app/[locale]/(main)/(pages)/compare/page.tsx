@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { resolveLocale } from "@repo/database"
 
 import { CompareTable } from "@/components/compare/compare-table"
@@ -9,7 +9,8 @@ import { createPageCanonicalUrl } from "@/lib/canonical-url"
 
 export const dynamic = "force-static"
 
-export async function generateMetadata(): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("compare")
     const locale = resolveLocale(await getLocale())
     return constructMetadata({
@@ -23,7 +24,8 @@ export async function generateMetadata(): Promise<Metadata> {
     })
 }
 
-export default async function ComparePage() {
+export default async function ComparePage({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("compare")
 
     return (

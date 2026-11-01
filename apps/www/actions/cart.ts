@@ -5,6 +5,7 @@ import { CartService } from "@/lib/services/cart-service"
 import { UserService } from "@/lib/services/user-service"
 import { currentUserId } from "@/lib/auth"
 import { revalidatePath } from "next/cache"
+import { addToCartSchema } from "@/lib/validation/schema"
 
 export async function addToCart(
   productId: string,
@@ -22,10 +23,18 @@ export async function addToCart(
       }
     }
 
+    const parsed = addToCartSchema.safeParse({ productId, quantity, selectedColorTemp, selectedColorKey })
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: "INVALID_QUANTITY",
+      }
+    }
+
     const result = await CartService.addToCart({
       userId,
-      productId,
-      quantity,
+      productId: parsed.data.productId,
+      quantity: parsed.data.quantity,
       selectedColorTemp,
       selectedColorKey,
     })

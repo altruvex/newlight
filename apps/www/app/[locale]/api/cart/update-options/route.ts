@@ -1,28 +1,26 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { currentUserId } from "@/lib/auth"
-import { prisma } from "@repo/database"
+import { logger } from "@/lib/logger"
+import { updateCartItemOptionsSchema } from "@/lib/validation/schema"
+import { prisma, type Prisma } from "@repo/database"
 import { NextResponse } from "next/server"
 
 export async function PATCH(request: Request) {
     const userId = await currentUserId()
 
     if (!userId) {
-        console.log("User Not authenticated");
-        return NextResponse.json(
-            { error: "Unauthorized" },
-            { status: 401 }
-        );
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     try {
-        const { itemId, selectedColorTemp, selectedColorKey } = await request.json()
-
-        if (!itemId) {
+        const body = await request.json().catch(() => null)
+        const validation = updateCartItemOptionsSchema.safeParse(body)
+        if (!validation.success) {
             return NextResponse.json(
-                { error: "Item ID required" },
+                { error: "Invalid input", details: validation.error.flatten().fieldErrors },
                 { status: 400 }
             )
         }
+        const { itemId, selectedColorTemp, selectedColorKey } = validation.data
 
         const cartItem = await prisma.cartItem.findFirst({
             where: {
@@ -32,13 +30,10 @@ export async function PATCH(request: Request) {
         })
 
         if (!cartItem) {
-            return NextResponse.json(
-                { error: "Cart item not found" },
-                { status: 404 }
-            )
+            return NextResponse.json({ error: "Cart item not found" }, { status: 404 })
         }
 
-        const updateData: any = {}
+        const updateData: Prisma.CartItemUpdateInput = {}
         if (selectedColorTemp !== undefined) {
             updateData.selectedColorTemp = selectedColorTemp
         }
@@ -53,10 +48,7 @@ export async function PATCH(request: Request) {
 
         return NextResponse.json({ success: true, item: updatedItem })
     } catch (error) {
-        console.error("Error updating cart item options:", error)
-        return NextResponse.json(
-            { error: "Failed to update cart item options" },
-            { status: 500 }
-        )
+        logger.error({ err: error }, "failed to update cart item options")
+        return NextResponse.json({ error: "Failed to update cart item options" }, { status: 500 })
     }
 }

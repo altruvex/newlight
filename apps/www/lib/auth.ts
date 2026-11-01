@@ -72,6 +72,10 @@ export const auth = betterAuth({
     session: {
         expiresIn: 60 * 60 * 24 * 30,
         updateAge: 60 * 60 * 24,
+        // A signed copy of the session in a cookie, so getSession() skips the database for 5
+        // minutes after each check. sign-out deletes this cookie with the session one. The cost:
+        // a session revoked elsewhere, or a role change, can take up to 5 minutes to show here.
+        cookieCache: { enabled: true, maxAge: 60 * 5 },
     },
 
     plugins: [nextCookies()],

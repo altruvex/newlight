@@ -1,8 +1,9 @@
 import type { Metadata } from "next"
+import { cache } from "react"
 import { JsonLd, breadcrumbSchema, itemListSchema } from "@/lib/structured-data"
 import { ProductStrip } from "@/components/product-strip"
 import { categoryHighlights, categoryOffers } from "@/lib/services/merchandising-service"
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { notFound, permanentRedirect } from "next/navigation"
 import { encodeSlug, resolveLocale, type Locale } from "@repo/database"
 import { CategoryService } from "@/lib/services/category-service"
@@ -13,12 +14,13 @@ import { createCategoryCanonicalUrl } from "@/lib/canonical-url"
 import { allTaxonomyPaths, alternateCategorySlug } from "@/lib/services/taxonomy"
 import CategoryPage from "./category-page"
 
-export const revalidate = 7200
+export const revalidate = 900
 
 type Props = { params: Promise<{ category: string; locale: string }> }
 
-async function load(params: Props["params"]) {
-    const { category: slug } = await params
+// generateMetadata and the page both need this; cache() lets the second call reuse the
+// first one's queries within a render instead of running them again.
+const loadCached = cache(async (slug: string) => {
     const locale = resolveLocale(await getLocale())
     const resolution = await CategoryService.resolveCategory(locale, decodeURIComponent(slug))
 
@@ -37,6 +39,12 @@ async function load(params: Props["params"]) {
 
     const offer = await offersForSection({ categoryId: category.id })
     return { category: enriched, locale, offer }
+})
+
+async function load(params: Props["params"]) {
+    const resolved = await params
+    setRequestLocale(resolved.locale)
+    return loadCached(resolved.category)
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {

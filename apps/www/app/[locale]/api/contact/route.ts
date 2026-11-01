@@ -1,7 +1,8 @@
 import { prisma, resolveLocale, consume } from "@repo/database"
 import { NextRequest, NextResponse } from "next/server"
 import { queueMail } from "@repo/mail/outbox"
-import { adminRecipients, dispatchPushSoon, notifyRecipients } from "@repo/notifications"
+import { adminRecipients, notifyRecipients } from "@repo/notifications"
+import { dispatchDeliveriesAfterResponse } from "@/lib/deliveries"
 import { z } from "zod"
 
 const contactFormSchema = z.object({
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
         if (!validation.success) {
             return NextResponse.json(
-                { error: "Invalid input", details: validation.error },
+                { error: "Invalid input", details: validation.error.flatten().fieldErrors },
                 { status: 400 }
             )
         }
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             return created
         })
 
-        dispatchPushSoon(prisma)
+        dispatchDeliveriesAfterResponse("contact-form")
 
         return NextResponse.json(
             {

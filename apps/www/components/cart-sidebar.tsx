@@ -31,7 +31,7 @@ export function CartSidebar() {
             if (!isSignedIn || !userId) return
             setIsLoading(true)
             try {
-                const response = await fetch("/api/cart")
+                const response = await fetch(`/${locale}/api/cart`)
                 if (response.ok) {
                     const items = await response.json()
                     setCartItems(items)
@@ -71,7 +71,7 @@ export function CartSidebar() {
 
         setIsUpdating(itemId)
         try {
-            const response = await fetch("/api/cart", {
+            const response = await fetch(`/${locale}/api/cart`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ itemId, quantity: newQuantity }),
@@ -104,7 +104,7 @@ export function CartSidebar() {
 
         setIsUpdating(itemId)
         try {
-            const response = await fetch("/api/cart/update-options", {
+            const response = await fetch(`/${locale}/api/cart/update-options`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ itemId, selectedColorTemp: newColorTemp }),
@@ -134,7 +134,7 @@ export function CartSidebar() {
 
         setIsUpdating(itemId)
         try {
-            const response = await fetch("/api/cart/update-options", {
+            const response = await fetch(`/${locale}/api/cart/update-options`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ itemId, selectedColorKey: newColor }),
@@ -160,7 +160,7 @@ export function CartSidebar() {
 
         setIsUpdating(itemId)
         try {
-            const response = await fetch("/api/cart", {
+            const response = await fetch(`/${locale}/api/cart`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ itemId }),

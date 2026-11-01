@@ -906,6 +906,7 @@
   },
   "section-type-page": {
     "noProducts": "لا توجد منتجات متاحة في هذه الفئة",
+    "noProductsBody": "لا توجد منتجات في هذا القسم بعد. تصفّح باقي الفئة.",
     "productCount": "{count} {count, plural, =1 {منتج} other {منتجات}}",
     "products": "منتجات",
     "product": "منتج",
@@ -999,7 +1000,22 @@
     "addressPlaceholder": "أدخل عنوانك",
     "cityPlaceholder": "أدخل المدينة",
     "statePlaceholder": "أدخل المحافظة",
-    "postalCodePlaceholder": "أدخل الرمز البريدي"
+    "postalCodePlaceholder": "أدخل الرمز البريدي",
+    "duplicateTitle": "تم تقديم هذا الطلب بالفعل",
+    "duplicateBody": "جاري تحويلك إلى طلبك…",
+    "addressFailedTitle": "تعذر حفظ العنوان",
+    "orderFailedTitle": "تعذر إتمام الطلب",
+    "errors": {
+      "UNAUTHENTICATED": "يرجى تسجيل الدخول للمتابعة.",
+      "INVALID_INPUT": "بعض البيانات ناقصة أو غير صحيحة. يرجى مراجعة النموذج.",
+      "CONFIG_NOT_FOUND": "تعذر العثور على هذا التكوين. يرجى إنشائه من جديد.",
+      "PRODUCT_NOT_FOUND": "هذا المنتج لم يعد متاحًا.",
+      "OUT_OF_STOCK": "هذا المنتج غير متوفر في المخزون حاليًا.",
+      "SHIPPING_ADDRESS_REQUIRED": "يرجى إضافة عنوان شحن أولًا.",
+      "ORDER_NOT_FOUND": "الطلب غير موجود.",
+      "ORDER_NOT_CANCELLABLE": "لم يعد من الممكن إلغاء هذا الطلب.",
+      "FAILED": "حدث خطأ ما. يرجى المحاولة مرة أخرى."
+    }
   },
   "complete": {
     "orderConfirmed": "تم تأكيد طلبك!",

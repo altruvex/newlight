@@ -4,7 +4,8 @@ import { SupportedLanguage } from "@/types";
 import { getLocale, getTranslations, setRequestLocale } from "next-intl/server";
 import { AboutUsClient } from "./about";
 
-export async function generateMetadata() {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("metadatas.about-us-page");
 
     const locale = await getLocale() as SupportedLanguage

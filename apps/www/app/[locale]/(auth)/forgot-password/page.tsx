@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { getLocale, getTranslations } from "next-intl/server"
+import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { resolveLocale } from "@repo/database"
 
 import { AuthCentered } from "@/components/auth/auth-split"
@@ -7,7 +7,8 @@ import { ForgotPasswordForm } from "@/components/auth/forgot-password-form"
 import { constructMetadata } from "@/lib/metadata"
 import { createPageCanonicalUrl } from "@/lib/canonical-url"
 
-export async function generateMetadata(): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+    setRequestLocale((await params).locale)
     const t = await getTranslations("auth")
     const locale = resolveLocale(await getLocale())
     return constructMetadata({
@@ -21,7 +22,8 @@ export async function generateMetadata(): Promise<Metadata> {
     })
 }
 
-export default function ForgotPasswordPage() {
+export default async function ForgotPasswordPage({ params }: { params: Promise<{ locale: string }> }) {
+    setRequestLocale((await params).locale)
     return (
         <AuthCentered>
             <ForgotPasswordForm />

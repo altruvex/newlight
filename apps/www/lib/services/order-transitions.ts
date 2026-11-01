@@ -1,6 +1,7 @@
 import { prisma, resolveLocale, transitionOrder, type Actor, type OrderStatus, type TransitionResult } from "@repo/database"
 import { queueMail } from "@repo/mail/outbox"
-import { adminRecipients, dispatchPushSoon, notifyRecipients } from "@repo/notifications"
+import { adminRecipients, notifyRecipients } from "@repo/notifications"
+import { dispatchDeliveriesAfterResponse } from "@/lib/deliveries"
 
 export async function transitionOrderWithNotification(input: {
     orderId: string
@@ -53,7 +54,7 @@ export async function transitionOrderWithNotification(input: {
         })
     })
 
-    dispatchPushSoon(prisma)
+    dispatchDeliveriesAfterResponse("order-transition")
 
     return result
 }
