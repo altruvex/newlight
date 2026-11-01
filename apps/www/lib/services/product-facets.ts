@@ -1,6 +1,6 @@
 import { PLACEHOLDER, type Locale, type ProductColorTemp } from "@repo/database"
 
-import { availableOf, stockStatusOf, type StockStatus } from "@/lib/stock"
+import { availableOf, stockStatusOf, type StockLevelLike, type StockStatus } from "@/lib/stock"
 import type { CardView, ProductListCard } from "./selectors"
 
 /** Cards a product listing renders at first, and adds with each "Load more". */
@@ -59,11 +59,19 @@ const COLOR_TEMP_ORDER: readonly ProductColorTemp[] = ["WARM_3000K", "COOL_4000K
 
 type ListingRow = CardView<ProductListCard>
 
-export function toListingProduct(
-    row: ListingRow,
-    family: readonly ListingRow[],
+/** The per-product fields a family's filterable attributes are read from. */
+export interface FacetSource {
+    colorTemperatures: readonly ProductColorTemp[]
+    availableColors: readonly { color: { key: string } }[]
+    stockLevels: readonly StockLevelLike[]
+    specs: Parameters<typeof specValuesOf>[0]
+}
+
+/** A family's filterable attributes: the union over its members (stock is summed). */
+export function familyFacetFields(
+    family: readonly FacetSource[],
     locale: Locale
-): ListingProduct {
+): Pick<ListingProduct, "colorTemperatures" | "colorKeys" | "specs" | "available" | "stockStatus"> {
     const temps = new Set<ProductColorTemp>()
     const colors = new Set<string>()
     const specs = new Map<string, Set<string>>()
@@ -82,6 +90,22 @@ export function toListingProduct(
     }
 
     return {
+        colorTemperatures: [...temps].sort(
+            (a, b) => COLOR_TEMP_ORDER.indexOf(a) - COLOR_TEMP_ORDER.indexOf(b)
+        ),
+        colorKeys: [...colors],
+        specs: Object.fromEntries([...specs].map(([key, values]) => [key, [...values]])),
+        available: availableQuantity > 0,
+        stockStatus: stockStatusOf(availableQuantity),
+    }
+}
+
+export function toListingProduct(
+    row: ListingRow,
+    family: readonly ListingRow[],
+    locale: Locale
+): ListingProduct {
+    return {
         id: row.id,
         slug: row.slug,
         productId: row.productId,
@@ -94,13 +118,7 @@ export function toListingProduct(
         basePrice: row.basePrice,
         discountPercent: row.discountPercent,
         isDiscounted: row.isDiscounted,
-        colorTemperatures: [...temps].sort(
-            (a, b) => COLOR_TEMP_ORDER.indexOf(a) - COLOR_TEMP_ORDER.indexOf(b)
-        ),
-        colorKeys: [...colors],
-        specs: Object.fromEntries([...specs].map(([key, values]) => [key, [...values]])),
-        available: availableQuantity > 0,
-        stockStatus: stockStatusOf(availableQuantity),
+        ...familyFacetFields(family, locale),
         createdAt: row.createdAt.toISOString(),
         isFeatured: row.isFeatured,
     }

@@ -14,7 +14,6 @@ import { EmptyState } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Link } from "@/i18n/navigation"
 import {
-    applyFilters,
     EMPTY_FILTERS,
     filtersFromParams,
     filtersToParams,
@@ -33,13 +32,10 @@ export function SearchResults({ listing, query }: { listing: SearchListing; quer
         [searchParams]
     )
 
-    const products = useMemo(() => listing.entries.map((entry) => entry.product), [listing.entries])
-    const visible = useMemo(() => applyFilters(products, filters), [products, filters])
-    const linkOf = useMemo(
-        () => new Map(listing.entries.map((entry) => [entry.product.id, entry])),
-        [listing.entries]
-    )
+    // The server already filtered, sorted and paged; this renders the page as given.
+    const entries = listing.entries
 
+    // A filter change is a new server render; dropping `page` starts the new result at page 1.
     function updateFilters(next: ListingFilters) {
         const params = filtersToParams(next, { q: query })
         router.replace(`${pathname}?${params.toString()}`, { scroll: false })
@@ -50,11 +46,11 @@ export function SearchResults({ listing, query }: { listing: SearchListing; quer
             <ProductFilterBar
                 facets={listing.facets}
                 filters={filters}
-                resultCount={visible.length}
+                resultCount={listing.total}
                 onChange={updateFilters}
             />
 
-            {visible.length === 0 ? (
+            {entries.length === 0 ? (
                 <EmptyState
                     variant="no-results"
                     title={t("noMatches")}
@@ -77,20 +73,20 @@ export function SearchResults({ listing, query }: { listing: SearchListing; quer
                 />
             ) : (
                 <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:mt-10 lg:grid-cols-3 lg:gap-8 xl:grid-cols-4">
-                    {visible.map((product) => {
-                        const entry = linkOf.get(product.id)
+                    {entries.map((entry) => {
+                        const product = entry.product
                         return (
                             <Link
                                 key={product.id}
-                                href={`/category/${encodeSlug(entry?.categorySlug ?? "")}/${encodeSlug(
-                                    entry?.subCategorySlug ?? ""
+                                href={`/category/${encodeSlug(entry.categorySlug ?? "")}/${encodeSlug(
+                                    entry.subCategorySlug ?? ""
                                 )}/${encodeSlug(product.slug)}`}
                                 className="block"
                             >
                                 <ProductCard
                                     image={product.image ?? "/lighting-product.jpg"}
                                     title={product.name}
-                                    category={entry?.sectionName ?? ""}
+                                    category={entry.sectionName ?? ""}
                                     price={product.price}
                                     basePrice={product.basePrice}
                                     discountPercent={product.discountPercent}

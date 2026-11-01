@@ -1,11 +1,23 @@
-import { compareMoney, Prisma, prisma, resolveEffectivePrice, translationsFor, type Locale, type SerializedMoney } from "@repo/database"
+import {
+    compareMoney,
+    DEFAULT_LOCATION_ID,
+    Prisma,
+    prisma,
+    resolveEffectivePrice,
+    translationsFor,
+    type Locale,
+    type SerializedMoney,
+} from "@repo/database"
 import { activeDiscounts } from "@/lib/discounts"
 import { liveCategory, liveProduct, liveSubCategory, productImages, productListCardInclude, toCardView } from "./selectors"
 import {
+    applyFilters,
     buildFacets,
+    EMPTY_FILTERS,
+    familyFacetFields,
     toListingProduct,
+    type ListingFilters,
     type ListingProduct,
-    type SortKey,
     type ProductFacets,
 } from "./product-facets"
 
@@ -155,26 +167,27 @@ export interface SearchListingEntry {
 
 export interface SearchListing {
     entries: SearchListingEntry[]
+    /** Counts over every family matching the query, before filters (not just this page). */
     facets: ProductFacets
-    /** Distinct product families matching the query (not just this page). */
+    /** Distinct product families matching the query and filters (not just this page). */
     total: number
 }
 
 export const SEARCH_PAGE_SIZE = 24
 
 /**
- * One page of the family-deduped result list. Matching ids are read first (two columns, no
- * relations) so the page boundary and the real total come from the same deduped order; only the
- * rows of that page's families are then loaded in full. A non-default sort is applied here,
- * before the cut, so page 2 of "price low to high" continues page 1; the filter bar re-sorts
- * within the page by the same key, which leaves this order unchanged.
+ * One page of the family-deduped, filtered result list. Every match is read first with only the
+ * fields the filters and facet counts need (no images, names or descriptions), so facets describe
+ * the whole result, filters narrow the whole result, and the sort runs before the page is cut —
+ * page 2 continues page 1 under any filter and sort. Only that page's families are then loaded
+ * in full.
  */
 export async function searchListing(
     query: string,
     locale: Locale,
     page = 1,
     pageSize = SEARCH_PAGE_SIZE,
-    sort: SortKey = "featured"
+    filters: ListingFilters = EMPTY_FILTERS
 ): Promise<SearchListing> {
     const term = query.trim()
     const empty: SearchListing = {
@@ -188,30 +201,77 @@ export async function searchListing(
         prisma.product.findMany({
             where: productMatch(term, locale),
             orderBy: [{ isFeatured: "desc" }, { order: "asc" }],
-            select: { id: true, familyId: true, subCategoryId: true, price: true, createdAt: true },
+            select: {
+                id: true,
+                familyId: true,
+                subCategoryId: true,
+                productId: true,
+                slug: true,
+                price: true,
+                createdAt: true,
+                isFeatured: true,
+                colorTemperatures: true,
+                availableColors: { select: { color: { select: { key: true } } } },
+                stockLevels: { where: { locationId: DEFAULT_LOCATION_ID }, select: { onHand: true, reserved: true } },
+                specs: { select: { specKey: true, valueNumber: true, valueEn: true, valueAr: true, valueBool: true } },
+            },
         }),
         activeDiscounts(),
     ])
 
     // Same grouping as before: a family is one entry, represented by its first matching product
-    // (the row whose price and date the card shows).
-    const families = new Map<string, { lead: (typeof matches)[number]; ids: string[] }>()
+    // (the row whose price and date the card shows); its filterable attributes span all members.
+    const families = new Map<string, { lead: (typeof matches)[number]; members: (typeof matches)[number][] }>()
     for (const match of matches) {
         const key = match.familyId ?? match.id
         const family = families.get(key)
-        if (family) family.ids.push(match.id)
-        else families.set(key, { lead: match, ids: [match.id] })
+        if (family) family.members.push(match)
+        else families.set(key, { lead: match, members: [match] })
     }
-    const total = families.size
-    if (total === 0) return empty
+    if (families.size === 0) return empty
 
-    let ordered = [...families.values()]
+    // The facet view of each family. Name and image are not loaded here and are not read by
+    // applyFilters or buildFacets.
+    const facetRows = new Map(
+        [...families.values()].map(({ lead, members }) => {
+            const priced = resolveEffectivePrice(lead.price, lead, discounts)
+            const row: ListingProduct = {
+                id: lead.id,
+                slug: lead.slug,
+                productId: lead.productId,
+                name: "",
+                image: null,
+                price: priced.effective,
+                basePrice: priced.base,
+                discountPercent: priced.percentOff,
+                isDiscounted: priced.discount !== null,
+                ...familyFacetFields(members, locale),
+                createdAt: lead.createdAt.toISOString(),
+                isFeatured: lead.isFeatured,
+            }
+            return [lead.id, { row, ids: members.map((member) => member.id), lead }] as const
+        })
+    )
+    const all = [...facetRows.values()].map((family) => family.row)
+
+    const colorKeys = [...new Set(all.flatMap((product) => product.colorKeys))]
+    const colors = colorKeys.length
+        ? await prisma.productColor.findMany({ where: { key: { in: colorKeys } } })
+        : []
+    const colorNames = new Map(
+        colors.map((color) => [color.key, { name: locale === "ar" ? color.nameAr : color.nameEn, hex: color.hex }])
+    )
+    const facets: ProductFacets = { ...buildFacets(all, colorNames, locale), specs: [] }
+
+    // Filter only ("featured" keeps match order); the sort below compares money, not numbers.
+    let ordered = applyFilters(all, { ...filters, sort: "featured" }).map((product) => facetRows.get(product.id)!)
+    const total = ordered.length
+    if (total === 0) return { ...empty, facets }
+
+    const sort = filters.sort
     if (sort === "price-asc" || sort === "price-desc") {
-        const effective = new Map(
-            ordered.map(({ lead }) => [lead.id, resolveEffectivePrice(lead.price, lead, discounts).effective])
-        )
         const direction = sort === "price-asc" ? 1 : -1
-        ordered = ordered.sort((a, b) => direction * compareMoney(effective.get(a.lead.id)!, effective.get(b.lead.id)!))
+        ordered = ordered.sort((a, b) => direction * compareMoney(a.row.price, b.row.price))
     } else if (sort === "newest") {
         ordered = ordered.sort((a, b) => b.lead.createdAt.getTime() - a.lead.createdAt.getTime())
     }
@@ -260,17 +320,5 @@ export async function searchListing(
         })
     }
 
-    const colorKeys = [...new Set(entries.flatMap((entry) => entry.product.colorKeys))]
-    const colors = colorKeys.length
-        ? await prisma.productColor.findMany({ where: { key: { in: colorKeys } } })
-        : []
-    const colorNames = new Map(
-        colors.map((color) => [color.key, { name: locale === "ar" ? color.nameAr : color.nameEn, hex: color.hex }])
-    )
-
-    return {
-        entries,
-        facets: { ...buildFacets(entries.map((entry) => entry.product), colorNames, locale), specs: [] },
-        total,
-    }
+    return { entries, facets, total }
 }

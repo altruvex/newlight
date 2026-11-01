@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Link } from "@/i18n/navigation"
 import { Pager } from "@/components/pager"
 import { SEARCH_PAGE_SIZE, SearchService, searchListing } from "@/lib/services/search-service"
-import { isSortKey } from "@/lib/services/product-facets"
+import { filtersFromParams, filtersToParams } from "@/lib/services/product-facets"
 import { constructMetadata } from "@/lib/metadata"
 import { createPageCanonicalUrl } from "@/lib/canonical-url"
 import type { SupportedLanguage } from "@/types"
@@ -44,14 +44,13 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value)
     const q = first(raw.q)
     const pageParam = first(raw.page)
-    // Sort is applied across all results (server); the other filters narrow the page in view.
-    // Keep all of them when paging.
-    const filterParams: Record<string, string | undefined> = {}
+    // Filters and sort apply to every match on the server; the pager keeps them with the query.
+    const urlParams = new URLSearchParams()
     for (const key of Object.keys(raw)) {
-        if (["temp", "finish", "stock", "sale", "sort"].includes(key) || key.startsWith("spec.")) {
-            filterParams[key] = first(raw[key])
-        }
+        const value = first(raw[key])
+        if (value !== undefined) urlParams.set(key, value)
     }
+    const filters = filtersFromParams(urlParams)
     const requestedPage = Math.max(1, Math.floor(Number(pageParam ?? 1)) || 1)
     const query = (q ?? "").trim()
     const locale = resolveLocale(await getLocale())
@@ -62,13 +61,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
             ? SearchService.searchTaxonomy(query, locale, 48)
             : Promise.resolve({ categories: [], subCategories: [] }),
         query
-            ? searchListing(
-                query,
-                locale,
-                requestedPage,
-                SEARCH_PAGE_SIZE,
-                isSortKey(filterParams.sort) ? filterParams.sort : "featured"
-            )
+            ? searchListing(query, locale, requestedPage, SEARCH_PAGE_SIZE, filters)
             : Promise.resolve(null),
     ])
     const totalPages = Math.max(1, Math.ceil((listing?.total ?? 0) / SEARCH_PAGE_SIZE))
@@ -91,6 +84,8 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
 
     const productCount = listing?.total ?? 0
     const total = productCount + taxonomy.length
+    // Matches before filters: a filter that leaves nothing still shows the filter bar to undo it.
+    const matched = (listing?.facets.total ?? 0) + taxonomy.length
 
     return (
         <>
@@ -116,7 +111,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                         }
                         className="rounded-lg border bg-surface-sunk"
                     />
-                ) : total === 0 ? (
+                ) : matched === 0 ? (
                     <EmptyState
                         variant="no-results"
                         title={t("noResults", { query })}
@@ -166,7 +161,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                             </section>
                         )}
 
-                        {listing && listing.entries.length > 0 && (
+                        {listing && listing.facets.total > 0 && (
                             <section aria-labelledby="search-products">
                                 <h2
                                     id="search-products"
@@ -179,7 +174,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                                     page={page}
                                     totalPages={totalPages}
                                     basePath="/search"
-                                    params={{ ...filterParams, q: query }}
+                                    params={Object.fromEntries(filtersToParams(filters, { q: query }))}
                                 />
                             </section>
                         )}
