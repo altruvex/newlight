@@ -8,10 +8,6 @@ const orderInclude = {
 
 export type OrderWithItems = Prisma.OrderGetPayload<{ include: typeof orderInclude }>
 
-export async function getAllOrders(): Promise<OrderWithItems[]> {
-    return prisma.order.findMany({ orderBy: { createdAt: "desc" }, include: orderInclude })
-}
-
 export async function getOrdersByStatus(status: OrderStatus): Promise<OrderWithItems[]> {
     return prisma.order.findMany({
         where: { status },
