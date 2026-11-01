@@ -3,6 +3,9 @@ import { PLACEHOLDER, type Locale, type ProductColorTemp } from "@repo/database"
 import { availableOf, stockStatusOf, type StockStatus } from "@/lib/stock"
 import type { CardView, ProductListCard } from "./selectors"
 
+/** Cards a product listing renders at first, and adds with each "Load more". */
+export const LISTING_PAGE_SIZE = 24
+
 export type SortKey = "featured" | "price-asc" | "price-desc" | "newest"
 
 export const SORT_KEYS: readonly SortKey[] = ["featured", "price-asc", "price-desc", "newest"]

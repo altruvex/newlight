@@ -47,6 +47,13 @@ async function history(locale: "en" | "ar", options?: { skip?: number; take?: nu
 }
 
 describe("order history", () => {
+    it("counts a customer's orders by status without loading them", async () => {
+        const { UserService } = await import("@/lib/services/user-service")
+        const stats = await UserService.getUserStats(fixture.userId)
+        expect(stats.orderCount).toBe(2)
+        expect(Object.values(stats.statusCounts).reduce((a, b) => a + b, 0)).toBe(2)
+    })
+
     it("returns the customer's orders, newest first", async () => {
         const { orders, pagination } = await history("en")
         expect(pagination.total).toBe(2)
@@ -60,6 +67,35 @@ describe("order history", () => {
         expect(order!.shippingCost).toBe("100.00")
         expect(order!.items[0]!.price).toBe("150.00")
         expect(typeof order!.total).toBe("string")
+    })
+
+    it("reports the real item count and caps the items it loads", async () => {
+        const extra = await db.prisma.order.create({
+            data: {
+                userId: fixture.userId,
+                orderNumber: "NL-TEST-BIG",
+                idempotencyKey: "key-big",
+                subtotal: "700.00",
+                shippingCost: "0.00",
+                total: "700.00",
+                items: {
+                    create: Array.from({ length: 7 }, (_, i) => ({
+                        productId: fixture.products.small,
+                        productName: `snapshot-${i}`,
+                        productImage: "/x.png",
+                        price: "100.00",
+                        quantity: 1,
+                    })),
+                },
+            },
+        })
+        try {
+            const big = (await history("en")).orders.find((o) => o.orderNumber === "NL-TEST-BIG")!
+            expect(big.itemCount).toBe(7)
+            expect(big.items).toHaveLength(5)
+        } finally {
+            await db.prisma.order.delete({ where: { id: extra.id } })
+        }
     })
 
     it("names products in the requested locale, not whichever row the database returns first", async () => {

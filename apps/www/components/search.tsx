@@ -33,6 +33,8 @@ interface Product {
     ipRating?: string | null
 }
 
+const MIN_SEARCH_LENGTH = 2
+
 export function SearchSheet() {
     const t = useTranslations('search')
     const tLogo = useTranslations("nav")
@@ -53,31 +55,37 @@ export function SearchSheet() {
         }
     }, [open])
 
-    useEffect(() => {
-        const performSearch = async () => {
-            if (debouncedSearchTerm.trim() === "") {
-                setFilteredProducts([])
-                return
-            }
+    // A newer query (or closing the sheet) bumps the counter, so a slow earlier response is dropped.
+    const requestRef = useRef(0)
 
+    useEffect(() => {
+        const term = debouncedSearchTerm.trim()
+        const request = ++requestRef.current
+        if (term.length < MIN_SEARCH_LENGTH) return
+
+        const run = async () => {
             setIsSearching(true)
             try {
-                const results = await searchProducts(debouncedSearchTerm, locale)
-                setFilteredProducts(results)
+                const results = await searchProducts(term, locale)
+                if (request === requestRef.current) setFilteredProducts(results)
             } catch (error) {
                 console.error("Error searching products:", error)
-                setFilteredProducts([])
+                if (request === requestRef.current) setFilteredProducts([])
             } finally {
-                setIsSearching(false)
+                if (request === requestRef.current) setIsSearching(false)
             }
         }
-
-        performSearch()
+        void run()
     }, [debouncedSearchTerm, locale])
+
+    // Too-short queries never reach the server; the view ignores any leftover results then.
+    const searchable = searchQuery.trim().length >= MIN_SEARCH_LENGTH
+    const searching = isSearching && searchable
 
     const handleOpenChange = (isOpen: boolean) => {
         setOpen(isOpen)
         if (!isOpen) {
+            requestRef.current++
             setSearchQuery("")
             setFilteredProducts([])
             setIsSearching(false)
@@ -158,10 +166,15 @@ export function SearchSheet() {
                                     aria-label={t('placeholder')}
                                     placeholder={t('placeholder')}
                                     value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    onChange={(e) => {
+                                        setSearchQuery(e.target.value)
+                                        // A short term orphans the request in flight (its `finally`
+                                        // is skipped), so clear the spinner here.
+                                        if (e.target.value.trim().length < MIN_SEARCH_LENGTH) setIsSearching(false)
+                                    }}
                                     className="h-14 w-full ps-12 pe-12 text-lg"
                                 />
-                                {isSearching && (
+                                {searching && (
                                     <div className="absolute end-4 top-1/2 -translate-y-1/2">
                                         <Loader2 aria-hidden className="h-5 w-5 animate-spin text-muted-foreground" />
                                         <span className="sr-only">{t('searching', { query: searchQuery })}</span>
@@ -171,7 +184,11 @@ export function SearchSheet() {
                             <div className="mt-8 space-y-6">
                                 {searchQuery ? (
                                     <>
-                                        {isSearching ? (
+                                        {!searchable ? (
+                                            <p className="py-12 text-center text-sm text-muted-foreground">
+                                                {t('minChars', { count: MIN_SEARCH_LENGTH })}
+                                            </p>
+                                        ) : searching ? (
                                             <div className="text-center py-12">
                                                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
                                                 <p className="text-sm text-muted-foreground">

@@ -64,6 +64,9 @@ export function ProductCard({
                     alt={title}
                     width={500}
                     height={500}
+                    // Matches the listing grids (1 / 2 / 3 / 4 columns at sm / lg / xl); carousel
+                    // tiles are narrower (260-320px), so this never under-fetches for them.
+                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, (max-width: 1280px) 33vw, 25vw"
                     data-reveal-media
                     className={cn(
                         "size-full object-cover",

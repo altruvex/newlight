@@ -1,4 +1,7 @@
-import { Prisma, prisma, resolveEffectivePrice, type ActiveDiscount, type Locale } from "@repo/database"
+import { unstable_cache } from "next/cache"
+import { loadActiveDiscounts, Prisma, prisma, resolveEffectivePrice, type ActiveDiscount, type Locale } from "@repo/database"
+
+import { logger } from "@/lib/logger"
 
 import { activeDiscounts } from "@/lib/discounts"
 import { liveProduct, productLinkedCardInclude, toCardView, type CardView } from "./selectors"
@@ -62,16 +65,44 @@ export function summariseOffers(rows: readonly PricedRow[], discounts: readonly 
     return { percentOff, productCount: counted.size, endsAt: endsAt.toISOString() }
 }
 
-export async function offersHighlight(): Promise<OfferSummary | null> {
-    const discounts = await activeDiscounts()
+// Every product the active discounts could reach, with only the fields pricing reads. The
+// winning discount depends on each row's price (fixed-amount vs percent) and id (PRODUCTS
+// scope), so the summary is evaluated per row rather than with an aggregate; callers cache it.
+async function pricedCandidates(where: Prisma.ProductWhereInput) {
+    return prisma.product.findMany({
+        where,
+        orderBy: [{ isFeatured: "desc" }, { order: "asc" }],
+        select: { id: true, familyId: true, subCategoryId: true, price: true },
+    })
+}
+
+async function offersHighlight(): Promise<OfferSummary | null> {
+    // Not `activeDiscounts()`: that swallows a failed read as "no offers", and the cache
+    // below would keep that empty answer for 15 minutes. A throw is never cached.
+    const discounts = await loadActiveDiscounts(prisma, new Date())
     const where = whereForDiscounts(discounts)
     if (!where) return null
 
-    const rows = await prisma.product.findMany({
-        where,
-        select: { id: true, familyId: true, subCategoryId: true, price: true },
-    })
-    return summariseOffers(rows, discounts)
+    return summariseOffers(await pricedCandidates(where), discounts)
+}
+
+/**
+ * The offers bar, read on every storefront page. Plain numbers and an ISO string, so it
+ * round-trips the cache; purged with the `catalog` tag, and never older than the layout's
+ * own 900s ceiling (an offer window opening or closing is announced by nothing).
+ */
+const offersHighlightCache = unstable_cache(offersHighlight, ["offers-highlight"], {
+    revalidate: 900,
+    tags: ["catalog"],
+})
+
+export async function cachedOffersHighlight(): Promise<OfferSummary | null> {
+    try {
+        return await offersHighlightCache()
+    } catch (error) {
+        logger.error({ err: error }, "offers bar unavailable")
+        return null
+    }
 }
 
 export async function offersForSection(
@@ -90,58 +121,90 @@ export async function offersForSection(
     return summariseOffers(rows, discounts)
 }
 
-export async function allOffers(locale: Locale): Promise<{ summary: OfferSummary; groups: OfferGroup[] } | null> {
+export interface OffersLimit {
+    /** At most this many cards per sub-category group (the /offers page). */
+    perGroup?: number
+    /** At most this many cards in all, taken round-robin across groups (home and category strips). */
+    total?: number
+    /** Only offers in this category. */
+    categoryId?: string
+}
+
+/**
+ * Every live offer, grouped by sub-category, one card per family. The summaries cover every
+ * discounted product in scope, but full card data (translations, image, stock) is loaded only
+ * for the cards the caller will show; groups left with no card are dropped.
+ */
+export async function allOffers(
+    locale: Locale,
+    limit: OffersLimit = {}
+): Promise<{ summary: OfferSummary; groups: OfferGroup[] } | null> {
     const discounts = await activeDiscounts()
-    const where = whereForDiscounts(discounts)
-    if (!where) return null
+    const scope = whereForDiscounts(discounts)
+    if (!scope) return null
 
-    const products = await prisma.product.findMany({
-        where,
-        include: productLinkedCardInclude(locale),
-        orderBy: [{ isFeatured: "desc" }, { order: "asc" }],
-    })
-
-    const summary = summariseOffers(products, discounts)
+    const rows = await pricedCandidates(
+        limit.categoryId ? { ...scope, subCategory: { categoryId: limit.categoryId } } : scope
+    )
+    const summary = summariseOffers(rows, discounts)
     if (!summary) return null
 
-    const groups = new Map<string, OfferGroup>()
+    const bySubCategory = new Map<string, PricedRow[]>()
     const seen = new Set<string>()
-    for (const product of products) {
-        const priced = resolveEffectivePrice(product.price, product, discounts)
-        if (!priced.discount) continue
-
-        const key = product.familyId ?? product.id
+    for (const row of rows) {
+        if (!resolveEffectivePrice(row.price, row, discounts).discount) continue
+        const key = row.familyId ?? row.id
         if (seen.has(key)) continue
         seen.add(key)
+        const group = bySubCategory.get(row.subCategoryId)
+        if (group) group.push(row)
+        else bySubCategory.set(row.subCategoryId, [row])
+    }
 
-        const subCategory = product.subCategory
-        const group = groups.get(subCategory.id)
-        const card = toCardView(product, discounts)
-
-        if (group) {
-            group.products.push(card)
-            continue
+    const picked = new Map<string, string[]>()
+    if (limit.total !== undefined) {
+        let count = 0
+        for (let index = 0; count < limit.total; index += 1) {
+            const before = count
+            for (const [subCategoryId, group] of bySubCategory) {
+                const row = group[index]
+                if (!row || count >= limit.total) continue
+                picked.set(subCategoryId, [...(picked.get(subCategoryId) ?? []), row.id])
+                count += 1
+            }
+            if (count === before) break
         }
+    } else {
+        for (const [subCategoryId, group] of bySubCategory) {
+            picked.set(subCategoryId, group.slice(0, limit.perGroup ?? group.length).map((row) => row.id))
+        }
+    }
 
-        groups.set(subCategory.id, {
-            subCategoryId: subCategory.id,
-            name: subCategory.translations[0]?.name ?? "",
-            slug: subCategory.translations[0]?.slug ?? "",
-            categoryName: subCategory.category.translations[0]?.name ?? "",
-            categorySlug: subCategory.category.translations[0]?.slug ?? "",
-            summary: { percentOff: 0, productCount: 0, endsAt: summary.endsAt },
-            products: [card],
+    const ids = [...picked.values()].flat()
+    const cards = await prisma.product.findMany({
+        where: { id: { in: ids } },
+        include: productLinkedCardInclude(locale),
+    })
+    const cardById = new Map(cards.map((card) => [card.id, card]))
+
+    const groups: OfferGroup[] = []
+    for (const [subCategoryId, group] of bySubCategory) {
+        const products = (picked.get(subCategoryId) ?? []).flatMap((id) => {
+            const card = cardById.get(id)
+            return card ? [toCardView(card, discounts)] : []
+        })
+        const first = products[0]
+        if (!first) continue
+        groups.push({
+            subCategoryId,
+            name: first.subCategory.translations[0]?.name ?? "",
+            slug: first.subCategory.translations[0]?.slug ?? "",
+            categoryName: first.subCategory.category.translations[0]?.name ?? "",
+            categorySlug: first.subCategory.category.translations[0]?.slug ?? "",
+            summary: summariseOffers(group, discounts) ?? { percentOff: 0, productCount: 0, endsAt: summary.endsAt },
+            products,
         })
     }
 
-    const rowsById = new Map(products.map((product) => [product.id, product]))
-    for (const group of groups.values()) {
-        const rows = group.products.flatMap((card) => {
-            const row = rowsById.get(card.id)
-            return row ? [row] : []
-        })
-        group.summary = summariseOffers(rows, discounts) ?? group.summary
-    }
-
-    return { summary, groups: [...groups.values()] }
+    return { summary, groups }
 }

@@ -10,6 +10,9 @@ import {
 
 export const productImages = { orderBy: { order: "asc" as const } }
 
+// Every card shows one photo; only the product page (productDetailInclude) needs the gallery.
+export const productCardImages = { ...productImages, take: 1 }
+
 export const productSpecs = {
     include: { spec: true },
     orderBy: { spec: { order: "asc" as const } },
@@ -22,7 +25,7 @@ export function productAvailableColors() {
 export function productCardInclude(locale: Locale) {
     return {
         translations: translationsFor(locale),
-        images: productImages,
+        images: productCardImages,
     } satisfies Prisma.ProductInclude
 }
 
@@ -48,7 +51,7 @@ export function productListCardInclude(locale: Locale) {
     return {
         translations: translationsFor(locale),
         family: { include: { translations: translationsFor(locale) } },
-        images: productImages,
+        images: productCardImages,
         availableColors: { include: { color: true }, orderBy: { order: "asc" as const } },
         stockLevels: {
             where: { locationId: DEFAULT_LOCATION_ID },
@@ -70,7 +73,7 @@ export const liveCategory = { isActive: true, deletedAt: null } satisfies Prisma
 export function productLinkedCardInclude(locale: Locale) {
     return {
         translations: translationsFor(locale),
-        images: productImages,
+        images: productCardImages,
         stockLevels: {
             where: { locationId: DEFAULT_LOCATION_ID },
             select: { onHand: true, reserved: true },

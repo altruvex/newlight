@@ -8,7 +8,9 @@ import { EmptyState } from "@/components/states"
 import { SearchResults } from "@/components/search-results"
 import { Button } from "@/components/ui/button"
 import { Link } from "@/i18n/navigation"
-import { SearchService, searchListing } from "@/lib/services/search-service"
+import { Pager } from "@/components/pager"
+import { SEARCH_PAGE_SIZE, SearchService, searchListing } from "@/lib/services/search-service"
+import { isSortKey } from "@/lib/services/product-facets"
 import { constructMetadata } from "@/lib/metadata"
 import { createPageCanonicalUrl } from "@/lib/canonical-url"
 import type { SupportedLanguage } from "@/types"
@@ -35,18 +37,42 @@ export async function generateMetadata({
     })
 }
 
-export default async function SearchPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-    const { q } = await searchParams
+type SearchPageParams = Record<string, string | string[] | undefined>
+
+export default async function SearchPage({ searchParams }: { searchParams: Promise<SearchPageParams> }) {
+    const raw = await searchParams
+    const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value)
+    const q = first(raw.q)
+    const pageParam = first(raw.page)
+    // Sort is applied across all results (server); the other filters narrow the page in view.
+    // Keep all of them when paging.
+    const filterParams: Record<string, string | undefined> = {}
+    for (const key of Object.keys(raw)) {
+        if (["temp", "finish", "stock", "sale", "sort"].includes(key) || key.startsWith("spec.")) {
+            filterParams[key] = first(raw[key])
+        }
+    }
+    const requestedPage = Math.max(1, Math.floor(Number(pageParam ?? 1)) || 1)
     const query = (q ?? "").trim()
     const locale = resolveLocale(await getLocale())
     const t = await getTranslations("search")
 
     const [results, listing] = await Promise.all([
         query
-            ? SearchService.searchContent(query, locale, 48)
-            : Promise.resolve({ products: [], categories: [], subCategories: [] }),
-        query ? searchListing(query, locale, 48) : Promise.resolve(null),
+            ? SearchService.searchTaxonomy(query, locale, 48)
+            : Promise.resolve({ categories: [], subCategories: [] }),
+        query
+            ? searchListing(
+                query,
+                locale,
+                requestedPage,
+                SEARCH_PAGE_SIZE,
+                isSortKey(filterParams.sort) ? filterParams.sort : "featured"
+            )
+            : Promise.resolve(null),
     ])
+    const totalPages = Math.max(1, Math.ceil((listing?.total ?? 0) / SEARCH_PAGE_SIZE))
+    const page = Math.min(requestedPage, totalPages)
 
     const taxonomy = [
         ...results.categories.map((c) => ({
@@ -63,7 +89,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         })),
     ]
 
-    const productCount = listing?.entries.length ?? 0
+    const productCount = listing?.total ?? 0
     const total = productCount + taxonomy.length
 
     return (
@@ -146,9 +172,15 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                                     id="search-products"
                                     className="mb-5 text-xs font-medium tracking-label text-muted-foreground uppercase"
                                 >
-                                    {t("products", { count: listing.entries.length })}
+                                    {t("products", { count: listing.total })}
                                 </h2>
                                 <SearchResults listing={listing} query={query} />
+                                <Pager
+                                    page={page}
+                                    totalPages={totalPages}
+                                    basePath="/search"
+                                    params={{ ...filterParams, q: query }}
+                                />
                             </section>
                         )}
                     </div>

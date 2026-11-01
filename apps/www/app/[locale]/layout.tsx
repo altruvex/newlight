@@ -2,13 +2,14 @@ import { Providers } from "@/components/providers";
 import { RegisterServiceWorker } from "@/components/register-sw";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { pickMessages } from '@/i18n/client-namespaces';
 import { routing } from '@/i18n/routing';
 import { constructMetadata } from "@/lib/metadata";
 import { cn } from "@/lib/utils";
 import { SupportedLanguage } from "@/types";
 import { Metadata } from "next";
 import { NextIntlClientProvider, hasLocale } from 'next-intl';
-import { setRequestLocale } from 'next-intl/server';
+import { getMessages, setRequestLocale } from 'next-intl/server';
 import { Inter, Playfair_Display, Almarai } from "next/font/google";
 import { notFound } from "next/navigation";
 import "../globals.css";
@@ -87,6 +88,10 @@ export default async function RootLayout({
   }
   setRequestLocale(locale)
 
+  // Only the namespaces client components read are serialised into the page payload; server
+  // components resolve theirs on the server. test/client-namespaces.test.ts keeps the list honest.
+  const messages = pickMessages(await getMessages())
+
   return (
       <html lang={locale} suppressHydrationWarning dir={locale === "ar" ? "rtl" : "ltr"} className={cn(inter.variable, playfair.variable, almarai.variable)}>
         <body className="overflow-x-hidden scroll-smooth selection:bg-primary/20" suppressHydrationWarning>
@@ -114,7 +119,7 @@ export default async function RootLayout({
             disableTransitionOnChange
             storageKey="theme-preference"
           >
-            <NextIntlClientProvider>
+            <NextIntlClientProvider messages={messages}>
               <Providers>
                 {children}
                 <RegisterServiceWorker />

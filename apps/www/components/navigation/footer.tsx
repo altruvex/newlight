@@ -1,7 +1,7 @@
 import { encodeSlug, resolveLocale } from "@repo/database"
 import { Container } from "@/components/layout/section";
 import { Link } from "@/i18n/navigation";
-import { CategoryService } from "@/lib/services/category-service";
+import { cachedFooterSubCategories } from "@/lib/services/category-service";
 import { convertToArabicNumerals } from "@/lib/utils";
 import { getLocale, getTranslations } from "next-intl/server";
 import { FaFacebook, FaInstagram } from "react-icons/fa";
@@ -10,7 +10,7 @@ export async function Footer() {
     const t = await getTranslations("footer");
     const locale = await getLocale();
 
-    const subCategories = await CategoryService.getFooterSubCategories(resolveLocale(locale));
+    const subCategories = await cachedFooterSubCategories(resolveLocale(locale));
 
     const columns = subCategories.reduce<Map<string, { name: string; slug: string; items: typeof subCategories }>>(
         (groups, subCategory) => {

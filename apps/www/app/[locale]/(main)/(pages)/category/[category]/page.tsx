@@ -93,7 +93,7 @@ export default async function Page({ params }: Props) {
     const [t, highlights, offers] = await Promise.all([
         getTranslations("merchandising"),
         categoryHighlights(category.id, locale),
-        offer ? categoryOffers(locale, slug) : Promise.resolve(null),
+        offer ? categoryOffers(locale, category.id) : Promise.resolve(null),
     ])
 
     const categoryPath = `/${locale}/category/${encodeSlug(slug)}`

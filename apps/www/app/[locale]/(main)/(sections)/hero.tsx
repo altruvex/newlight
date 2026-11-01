@@ -12,9 +12,8 @@ export async function Hero() {
     const t = await getTranslations("hero-section")
     const locale = resolveLocale(await getLocale())
 
-    const [category] = await CategoryService.getAllCategories(locale)
-    const categoryTranslation = category?.translations[0]
-    const categoryHref = categoryTranslation ? `/category/${encodeSlug(categoryTranslation.slug)}` : "/category"
+    const category = await CategoryService.getFirstCategoryTile(locale)
+    const categoryHref = category?.slug ? `/category/${encodeSlug(category.slug)}` : "/category"
     const categoryImage = category?.imageUrl || TILE_FALLBACK
 
     return (

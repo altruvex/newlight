@@ -13,6 +13,9 @@ import { stockStatusOfLevels } from "@/lib/stock"
 
 export const revalidate = 900
 
+// Cards per section; the rest are one click away through the section's "browse" link.
+const PER_SECTION = 8
+
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
     setRequestLocale((await params).locale)
     const locale = resolveLocale(await getLocale())
@@ -30,7 +33,7 @@ export default async function OffersPage({ params }: { params: Promise<{ locale:
     setRequestLocale((await params).locale)
     const locale = resolveLocale(await getLocale())
     const t = await getTranslations("offers")
-    const offers = await allOffers(locale)
+    const offers = await allOffers(locale, { perGroup: PER_SECTION })
 
     const tag = numericLocale(locale)
     const number = new Intl.NumberFormat(tag)

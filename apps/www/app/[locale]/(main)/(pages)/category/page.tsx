@@ -24,24 +24,24 @@ export default async function CategoriesPage({ params }: { params: Promise<{ loc
     const locale = resolveLocale(await getLocale())
     const all = await CategoryService.getAllCategories(locale)
 
-    const categories = (
-        await Promise.all(
-            all.map(async (category) => {
-                const translation = category.translations[0]
-                if (!translation) {
-                    console.warn(`[category] ${category.id} has no ${locale} translation; omitted`)
-                    return null
-                }
-                return {
-                    key: category.id,
-                    slug: translation.slug,
-                    name: translation.name,
-                    description: translation.description ?? "",
-                    imageUrl: (await CategoryService.resolveCategoryImage(category)) ?? "",
-                }
-            })
-        )
-    ).filter((category): category is NonNullable<typeof category> => category !== null)
+    const images = await CategoryService.resolveCategoryImages(all)
+
+    const categories = all.flatMap((category) => {
+        const translation = category.translations[0]
+        if (!translation) {
+            console.warn(`[category] ${category.id} has no ${locale} translation; omitted`)
+            return []
+        }
+        return [
+            {
+                key: category.id,
+                slug: translation.slug,
+                name: translation.name,
+                description: translation.description ?? "",
+                imageUrl: images.get(category.id) ?? "",
+            },
+        ]
+    })
 
     return <CategoriesSection categories={categories} />
 }

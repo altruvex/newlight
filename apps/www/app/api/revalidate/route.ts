@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { revalidatePath } from "next/cache"
+import { revalidatePath, revalidateTag } from "next/cache"
 
 export const dynamic = "force-dynamic"
 
@@ -56,6 +56,13 @@ export async function POST(request: NextRequest) {
 
     revalidatePath("/sitemap.xml")
     revalidated.push("/sitemap.xml")
+
+    // Shared reads cached with unstable_cache (offers bar, footer sections) outlive the page
+    // purge above; they carry this tag instead. Expired outright, not "max": under
+    // stale-while-revalidate the pages purged above would regenerate around the stale copy and
+    // keep it for another ISR window.
+    revalidateTag("catalog", { expire: 0 })
+    revalidated.push("tag:catalog")
 
     return NextResponse.json({ revalidated, at: new Date().toISOString() })
 }

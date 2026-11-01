@@ -4,7 +4,7 @@ import { resolveLocale } from "@repo/database"
 import { Footer } from "@/components/navigation/footer"
 import { Nav } from "@/components/navigation/nav"
 import { OffersBar } from "@/components/offers-bar"
-import { offersHighlight } from "@/lib/services/offers-service"
+import { cachedOffersHighlight } from "@/lib/services/offers-service"
 import { JsonLd, organisationSchema, webSiteSchema } from "@/lib/structured-data"
 
 // The offers bar and the footer's section list are read from the database on every page
@@ -23,7 +23,7 @@ export default async function MainLayout({
     setRequestLocale((await params).locale)
     const [t, offers, locale] = await Promise.all([
         getTranslations("Common"),
-        offersHighlight(),
+        cachedOffersHighlight(),
         getLocale().then(resolveLocale),
     ])
 

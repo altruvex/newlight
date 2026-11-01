@@ -6,7 +6,6 @@ import {
     prisma,
     resolveLocale,
     SHIPPING_OPTIONS,
-    type Locale,
 } from "@repo/database"
 import { revalidatePath } from "next/cache"
 import { getTranslations } from "next-intl/server"
@@ -191,43 +190,6 @@ export async function getOrderDetails(orderId: string): Promise<OrderWithDetails
     }
 }
 
-export async function getUserOrders(locale: Locale, page: number = 1, limit: number = 10) {
-    try {
-        const userId = await currentUserId()
-
-        if (!userId) {
-            return {
-                success: false,
-                error: "Authentication required",
-                orders: [],
-            }
-        }
-
-        const { orders, pagination } = await UserService.getOrderHistory(userId, locale, {
-            skip: (page - 1) * limit,
-            take: limit,
-        })
-
-        return {
-            success: true,
-            orders,
-            pagination: {
-                total: pagination.total,
-                page,
-                limit,
-                totalPages: Math.ceil(pagination.total / limit),
-            },
-        }
-    } catch (error) {
-        logger.error({ err: error }, "failed to load order history")
-        return {
-            success: false,
-            error: "Failed to fetch orders",
-            orders: [],
-        }
-    }
-}
-
 export async function cancelOrder(orderId: string): Promise<CancelOrderActionResult> {
     return requestOrderCancellation(orderId)
 }
@@ -295,21 +257,5 @@ export async function canCancelOrder(orderId: string): Promise<boolean> {
     } catch (error) {
         logger.error({ err: error, orderId }, "failed to check cancellability")
         return false
-    }
-}
-
-export async function getUserOrderStats() {
-    try {
-        const userId = await currentUserId()
-
-        if (!userId) {
-            return null
-        }
-
-        const stats = await UserService.getUserStats(userId)
-        return stats
-    } catch (error) {
-        logger.error({ err: error }, "failed to load order stats")
-        return null
     }
 }

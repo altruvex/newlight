@@ -130,8 +130,15 @@ describe("image ordering (§5)", () => {
         })
         expect(product.images[0]!.order).toBe(0)
         expect(product.images[0]!.url).toBe("/nl-test-5w-0.png")
-        expect(product.images.map((i) => i.order)).toEqual([0, 1])
+        // A card loads only its primary photo; the product page keeps the whole gallery.
+        expect(product.images.map((i) => i.order)).toEqual([0])
         expect("isPrimary" in product.images[0]!).toBe(false)
+
+        const detail = await db.prisma.product.findUniqueOrThrow({
+            where: { id: fixture.products.small },
+            include: productDetailInclude("en"),
+        })
+        expect(detail.images.map((i) => i.order)).toEqual([0, 1])
     })
 
     it("carries dimensions when they are known and null when they are not", async () => {

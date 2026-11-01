@@ -1,189 +1,17 @@
 import {
     prisma,
-    Prisma,
     DEFAULT_LOCATION_ID,
     resolveEffectivePrice,
     serializeMoney,
+    translationsFor,
     type Locale,
     type SerializedMoney,
 } from "@repo/database"
-import { liveProduct, productCardInclude, productDetailInclude, productLinkedCardInclude, toCardView } from "./selectors"
-import { getLocaleOrDefault } from "../db"
+import { liveProduct, productDetailInclude, productLinkedCardInclude, toCardView } from "./selectors"
 import { activeDiscounts } from "@/lib/discounts"
 import { availableOf, stockStatusOf } from "@/lib/stock"
-import { Product } from "@/types"
-import type { SpecificationSource } from "./shared-types"
-
-export type ProductWithTranslations = Prisma.ProductGetPayload<{
-    include: {
-        translations: true
-        subCategory: {
-            include: {
-                translations: true
-                category: { include: { translations: true } }
-            }
-        }
-    }
-}>
 
 export class ProductService {
-    private static extractSpecifications(product: SpecificationSource, locale: string): Record<string, string | number | string[]> | null {
-        const translation = product.translations?.find((t) => t.locale === locale)
-        const specs = translation?.specifications
-
-        if (!specs || typeof specs !== 'object' || Array.isArray(specs)) {
-            return null
-        }
-
-        const record = specs as Record<string, unknown>
-        const result: Record<string, string | number | string[]> = {}
-        let hasValidEntries = false
-
-        for (const [key, value] of Object.entries(record)) {
-            if (typeof value === 'string' || typeof value === 'number' || Array.isArray(value)) {
-                result[key] = value as string | number | string[]
-                hasValidEntries = true
-            }
-        }
-
-        return hasValidEntries ? result : null
-    }
-
-    private static async sortAlphabetically<T extends {
-        order?: number
-        isFeatured?: boolean
-        translations?: Array<{ locale: string; name: string }>
-    }>(
-        items: T[],
-        locale: string
-    ): Promise<T[]> {
-        return [...items].sort((a, b) => {
-            if (a.isFeatured !== undefined && b.isFeatured !== undefined) {
-                if (a.isFeatured && !b.isFeatured) return -1
-                if (!a.isFeatured && b.isFeatured) return 1
-            }
-
-            if (a.order !== undefined && b.order !== undefined) {
-                if (a.order !== b.order) {
-                    return a.order - b.order
-                }
-            }
-
-            const nameA = a.translations?.find((t) => t.locale === locale)?.name || ""
-            const nameB = b.translations?.find((t) => t.locale === locale)?.name || ""
-
-            return nameA.localeCompare(nameB, locale === "ar" ? "ar" : "en", {
-                numeric: true,
-                sensitivity: "base",
-            })
-        })
-    }
-
-    static async getProduct(
-        productId: string,
-        locale: string = "en"
-    ): Promise<ProductWithTranslations | null> {
-        const product = await prisma.product.findUnique({
-            where: { productId },
-            include: {
-                translations: {
-                    where: { locale },
-                    take: 1,
-                },
-                subCategory: {
-                    include: {
-                        translations: {
-                            where: { locale },
-                            take: 1,
-                        },
-                        category: {
-                            include: {
-                                translations: {
-                                    where: { locale },
-                                    take: 1,
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        })
-
-        return product
-    }
-
-    static async getProducts(
-        productIds: string[],
-        locale: string = "en"
-    ): Promise<ProductWithTranslations[]> {
-        const products = await prisma.product.findMany({
-            where: {
-                productId: { in: productIds },
-            },
-            include: {
-                translations: {
-                    where: { locale },
-                    take: 1,
-                },
-                subCategory: {
-                    include: {
-                        translations: {
-                            where: { locale },
-                            take: 1,
-                        },
-                        category: {
-                            include: {
-                                translations: {
-                                    where: { locale },
-                                    take: 1,
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        })
-
-        return products
-    }
-
-    static async getAllProducts(locale?: string, limit?: number): Promise<Product[]> {
-        const resolvedLocale = await getLocaleOrDefault(locale)
-        const products = await prisma.product.findMany({
-            where: {
-                isActive: true,
-            },
-            orderBy: [{ isFeatured: "desc" }, { order: "asc" }],
-            take: limit,
-            include: {
-                translations: true,
-                subCategory: {
-                    include: {
-                        translations: {
-                            where: { locale: resolvedLocale },
-                        },
-                        category: {
-                            include: {
-                                translations: {
-                                    where: { locale: resolvedLocale },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        })
-
-        const mappedProducts = products.map(product => ({
-            ...product,
-            specifications: this.extractSpecifications(product, resolvedLocale),
-            translations: product.translations.filter((t) => t.locale === resolvedLocale)
-        }))
-
-        const sorted = await this.sortAlphabetically(mappedProducts, resolvedLocale)
-        return sorted as unknown as Product[]
-    }
-
     static async getProductsByIds(skus: string[], locale: Locale) {
         const products = await prisma.product.findMany({
             where: { productId: { in: skus }, ...liveProduct },
@@ -227,75 +55,8 @@ export class ProductService {
         return resolveEffectivePrice(product.price, product, await activeDiscounts()).effective
     }
 
-    static async searchProducts(params: {
-        query?: string
-        categoryId?: string
-        subCategoryId?: string
-        locale?: string
-        skip?: number
-        take?: number
-    }): Promise<ProductWithTranslations[]> {
-        const { query, categoryId, subCategoryId, locale = "en", skip = 0, take = 20 } = params
-
-        const where: Prisma.ProductWhereInput = {}
-
-        if (query) {
-            where.OR = [
-                {
-                    translations: {
-                        some: {
-                            name: { contains: query, mode: "insensitive" },
-                            locale,
-                        },
-                    },
-                },
-                {
-                    productId: { contains: query, mode: "insensitive" },
-                },
-            ]
-        }
-
-        if (subCategoryId) {
-            where.subCategoryId = subCategoryId
-        } else if (categoryId) {
-            where.subCategory = {
-                categoryId,
-            }
-        }
-
-        const products = await prisma.product.findMany({
-            where,
-            include: {
-                translations: {
-                    where: { locale },
-                    take: 1,
-                },
-                subCategory: {
-                    include: {
-                        translations: {
-                            where: { locale },
-                            take: 1,
-                        },
-                        category: {
-                            include: {
-                                translations: {
-                                    where: { locale },
-                                    take: 1,
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-            skip,
-            take,
-            orderBy: { createdAt: "desc" },
-        })
-
-        return products
-    }
-
-    static async getProductVariants(slug: string, locale: Locale) {
+    /** The family's sibling products as the variant buttons need them: label parts and a resolved price only. */
+    static async getProductVariants(slug: string, locale: Locale): Promise<ProductVariantView[]> {
         const product = await prisma.product.findFirst({
             where: { slug, ...liveProduct },
             select: { familyId: true },
@@ -306,13 +67,28 @@ export class ProductService {
             where: { familyId: product.familyId, ...liveProduct },
             // displayOrder is admin-entered and can tie; the rest keeps the buttons in one order.
             orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-            include: { ...productCardInclude(locale), family: true },
+            select: {
+                id: true,
+                productId: true,
+                slug: true,
+                familyId: true,
+                subCategoryId: true,
+                price: true,
+                variantValue: true,
+                translations: { ...translationsFor(locale), select: { name: true } },
+                family: { select: { variantType: true } },
+            },
         })
 
         const discounts = await activeDiscounts()
         return variants.map((variant) => ({
-            ...toCardView(variant, discounts),
+            id: variant.id,
+            productId: variant.productId,
+            slug: variant.slug,
             name: variant.translations[0]?.name ?? variant.productId,
+            variantValue: variant.variantValue,
+            price: resolveEffectivePrice(variant.price, variant, discounts).effective,
+            family: variant.family ? { variantType: variant.family.variantType } : null,
         }))
     }
 
@@ -357,4 +133,49 @@ export class ProductService {
 }
 
 export type ProductDetailView = NonNullable<Awaited<ReturnType<typeof ProductService.getProductBySlug>>>
-export type ProductVariantView = Awaited<ReturnType<typeof ProductService.getProductVariants>>[number]
+
+export interface ProductVariantView {
+    id: string
+    productId: string
+    slug: string
+    name: string
+    variantValue: string | null
+    price: SerializedMoney
+    family: { variantType: string | null } | null
+}
+
+/** Exactly what the product page's client component reads — nothing else crosses the RSC boundary. */
+export function toProductPageView(view: ProductDetailView) {
+    const subCategory = view.subCategory.translations[0]
+    const category = view.subCategory.category.translations[0]
+    const translation = view.translations[0]
+    return {
+        productId: view.productId,
+        isFeatured: view.isFeatured,
+        price: view.price,
+        basePrice: view.basePrice,
+        discountPercent: view.discountPercent,
+        colorTemperatures: view.colorTemperatures,
+        stockAvailable: view.stockAvailable,
+        stockStatus: view.stockStatus,
+        translation: translation ? { name: translation.name, description: translation.description } : null,
+        subCategory: subCategory ? { name: subCategory.name, slug: subCategory.slug } : null,
+        category: category ? { name: category.name, slug: category.slug } : null,
+        images: view.images.map((image) => ({ url: image.url })),
+        colorKeys: view.availableColors.map((link) => link.color.key),
+        specs: view.specs.map((row) => ({
+            specKey: row.specKey,
+            valueEn: row.valueEn,
+            valueAr: row.valueAr,
+            spec: {
+                labelEn: row.spec.labelEn,
+                labelAr: row.spec.labelAr,
+                unitEn: row.spec.unitEn,
+                unitAr: row.spec.unitAr,
+            },
+        })),
+        variants: view.variants,
+    }
+}
+
+export type ProductPageView = ReturnType<typeof toProductPageView>

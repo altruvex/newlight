@@ -9,22 +9,35 @@ import { CompareTray } from "@/components/compare/compare-tray"
 import { EmptyState } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Link, usePathname, useRouter } from "@/i18n/navigation"
-import type { CategoryService } from "@/lib/services/category-service"
 import {
     EMPTY_FILTERS,
+    LISTING_PAGE_SIZE as PAGE_SIZE,
     applyFilters,
     filtersFromParams,
     filtersToParams,
     quickSpecs,
     type ListingFilters,
+    type ListingProduct,
+    type ProductFacets,
+    type SpecDefinitionView,
 } from "@/lib/services/product-facets"
 import { cn } from "@/lib/utils"
 import { encodeSlug, resolveLocale } from "@repo/database"
 import { useLocale, useTranslations } from "next-intl"
 import { useSearchParams } from "next/navigation"
-import { Suspense, useMemo } from "react"
+import { Suspense, useMemo, useState } from "react"
 
-type SubCategoryView = NonNullable<Awaited<ReturnType<typeof CategoryService.getProductsWithUniqueVariants>>>
+export interface SubCategoryView {
+    id: string
+    name: string
+    slug: string
+    description: string | null
+    categoryName: string
+    /** Every product, so the facets and filters cover the whole section; only PAGE_SIZE render at a time. */
+    listing: ListingProduct[]
+    facets: ProductFacets
+    definitions: SpecDefinitionView[]
+}
 
 interface SubCategoryPageProps {
     subCategory: SubCategoryView
@@ -56,15 +69,14 @@ function SectionTypeView({
 }: SubCategoryPageProps & { searchParams: { toString(): string } | null }) {
     const t = useTranslations("section-type-page")
     const tm = useTranslations("merchandising")
+    const tp = useTranslations("plp")
     const locale = resolveLocale(useLocale())
     const router = useRouter()
     const pathname = usePathname()
 
-    const subCategoryTranslation = subCategory.translations[0]
-    const categoryTranslation = subCategory.category.translations[0]
-    const subCategoryName = subCategoryTranslation?.name ?? ""
-    const categoryName = categoryTranslation?.name ?? ""
-    const subCategorySlug = subCategoryTranslation?.slug ?? ""
+    const subCategoryName = subCategory.name
+    const categoryName = subCategory.categoryName
+    const subCategorySlug = subCategory.slug
 
     const filters: ListingFilters = useMemo(
         () => filtersFromParams(new URLSearchParams(searchParams?.toString() ?? "")),
@@ -72,6 +84,12 @@ function SectionTypeView({
     )
 
     const visible = useMemo(() => applyFilters(subCategory.listing, filters), [subCategory.listing, filters])
+
+    // The count belongs to one filter + sort combination; any change starts again at one page.
+    const filterKey = filtersToParams(filters).toString()
+    const [paging, setPaging] = useState({ key: filterKey, count: PAGE_SIZE })
+    const shownCount = paging.key === filterKey ? paging.count : PAGE_SIZE
+    const shown = visible.slice(0, shownCount)
 
     function updateFilters(next: ListingFilters) {
         const query = filtersToParams(next).toString()
@@ -97,9 +115,9 @@ function SectionTypeView({
                             </h1>
                             <div className="h-px w-20 bg-accent" />
                         </div>
-                        {subCategoryTranslation?.description && (
+                        {subCategory.description && (
                             <p className="max-w-2xl text-base leading-relaxed font-light tracking-wide text-muted-foreground lg:text-lg">
-                                {subCategoryTranslation.description}
+                                {subCategory.description}
                             </p>
                         )}
                     </div>
@@ -172,8 +190,9 @@ function SectionTypeView({
                                     className="mt-10 rounded-lg border bg-surface-sunk"
                                 />
                             ) : (
+                                <>
                                 <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:mt-10 lg:grid-cols-3 lg:gap-8 xl:grid-cols-4">
-                                    {visible.map((product) => (
+                                    {shown.map((product) => (
                                         <Link
                                             key={product.id}
                                             href={`/category/${encodeSlug(categorySlug)}/${encodeSlug(subCategorySlug)}/${encodeSlug(product.slug)}`}
@@ -194,6 +213,21 @@ function SectionTypeView({
                                         </Link>
                                     ))}
                                 </div>
+                                <div className="mt-10 flex flex-col items-center gap-4">
+                                    <p className="text-sm text-muted-foreground tabular-nums" aria-live="polite">
+                                        {tp("showingOf", { shown: shown.length, total: visible.length })}
+                                    </p>
+                                    {shown.length < visible.length && (
+                                        <Button
+                                            size="lg"
+                                            variant="outline"
+                                            onClick={() => setPaging({ key: filterKey, count: shownCount + PAGE_SIZE })}
+                                        >
+                                            {tp("loadMore")}
+                                        </Button>
+                                    )}
+                                </div>
+                                </>
                             )}
                         </>
                     )}

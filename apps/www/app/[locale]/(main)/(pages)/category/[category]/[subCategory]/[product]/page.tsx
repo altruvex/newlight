@@ -8,7 +8,7 @@ import { relatedProducts } from "@/lib/services/merchandising-service"
 import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { notFound, permanentRedirect } from "next/navigation"
 import { encodeSlug, resolveLocale } from "@repo/database"
-import { ProductService } from "@/lib/services/product-service"
+import { ProductService, toProductPageView } from "@/lib/services/product-service"
 import { constructMetadata } from "@/lib/metadata"
 import { createProductCanonicalUrl } from "@/lib/canonical-url"
 import { alternateCategorySlug, alternateSubCategorySlug, resolveProductSlug } from "@/lib/services/taxonomy"
@@ -142,7 +142,7 @@ export default async function Page({ params }: Props) {
                     ]),
                 ]}
             />
-            <ProductPage product={view} assurance={<PurchaseAssurance />} />
+            <ProductPage product={toProductPageView(view)} assurance={<PurchaseAssurance />} />
             <RecordView sku={view.productId} />
             <ProductStrip
                 cards={related}

@@ -4,24 +4,14 @@
     {
       "name": "storefront",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": [
-        "--filter",
-        "www",
-        "dev"
-      ],
-      "port": 3000,
-      "autoPort": true
+      "runtimeArgs": ["--filter", "www", "dev"],
+      "port": 3003
     },
     {
       "name": "admin",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": [
-        "--filter",
-        "admin",
-        "dev"
-      ],
-      "port": 3001,
-      "autoPort": true
+      "runtimeArgs": ["--filter", "admin", "dev"],
+      "port": 3002
     }
   ]
 }

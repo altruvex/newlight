@@ -1,11 +1,10 @@
-import { prisma, translationsFor, type Locale } from "@repo/database"
+import { unstable_cache } from "next/cache"
+import { Prisma, prisma, translationsFor, type Locale } from "@repo/database"
 import {
     liveProduct,
     liveSubCategory,
-    productCardInclude,
     productListCardInclude,
     toCardView,
-    type ProductCard,
 } from "./selectors"
 import { activeDiscounts } from "@/lib/discounts"
 import {
@@ -19,7 +18,6 @@ import {
 import { resolveCategory, resolveSubCategory } from "./taxonomy"
 
 export type CategoryWithSubCategories = NonNullable<Awaited<ReturnType<typeof CategoryService.getCategoryBySlug>>>
-export type SubCategoryWithProducts = NonNullable<Awaited<ReturnType<typeof CategoryService.getSubCategoryWithProducts>>>
 
 export type FooterSubCategory = {
     id: string
@@ -69,17 +67,53 @@ export class CategoryService {
         return product?.images[0]?.url ?? null
     }
 
+    /**
+     * The batch form of the two lookups above: for each id, the first image of the first live
+     * product under it (same product order), in one query instead of one per tile.
+     */
+    private static async firstProductImages(
+        scope: "subCategory" | "category",
+        ids: readonly string[]
+    ): Promise<Map<string, string>> {
+        if (ids.length === 0) return new Map()
+        const key = scope === "subCategory" ? Prisma.sql`p."subCategoryId"` : Prisma.sql`s."categoryId"`
+        const rows = await prisma.$queryRaw<Array<{ key: string; url: string | null }>>`
+            SELECT DISTINCT ON (${key}) ${key} AS key,
+                (SELECT i.url FROM "product_images" i WHERE i."productId" = p.id ORDER BY i."order" ASC LIMIT 1) AS url
+            FROM "products" p
+            JOIN "sub_categories" s ON s.id = p."subCategoryId"
+            WHERE ${key} IN (${Prisma.join([...ids])})
+              AND p."isActive" = true AND p."deletedAt" IS NULL
+            ORDER BY ${key}, p."isFeatured" DESC, p."displayOrder" ASC, p."order" ASC
+        `
+        return new Map(rows.flatMap((row) => (row.url ? [[row.key, row.url] as const] : [])))
+    }
+
     /** Fills in each sub-category's `imageUrl` from its own first product when the admin left it blank. */
     static async withSubCategoryImageFallback<T extends { id: string; imageUrl: string | null }>(
         subCategories: T[]
     ): Promise<T[]> {
-        return Promise.all(
-            subCategories.map(async (sub) => {
-                if (sub.imageUrl) return sub
-                const fallback = await this.firstProductImageForSubCategory(sub.id)
-                return fallback ? { ...sub, imageUrl: fallback } : sub
-            })
+        const missing = subCategories.filter((sub) => !sub.imageUrl).map((sub) => sub.id)
+        const fallbacks = await this.firstProductImages("subCategory", missing)
+        return subCategories.map((sub) => {
+            const fallback = sub.imageUrl ? null : fallbacks.get(sub.id)
+            return fallback ? { ...sub, imageUrl: fallback } : sub
+        })
+    }
+
+    /** `resolveCategoryImage` for a whole list of categories, with one query for all fallbacks. */
+    static async resolveCategoryImages(
+        categories: ReadonlyArray<{ id: string; imageUrl: string | null; subCategories?: Array<{ imageUrl: string | null }> }>
+    ): Promise<Map<string, string | null>> {
+        const own = new Map(
+            categories.map((category) => [
+                category.id,
+                category.imageUrl || category.subCategories?.find((sub) => sub.imageUrl)?.imageUrl || null,
+            ])
         )
+        const missing = [...own].filter(([, url]) => !url).map(([id]) => id)
+        const fallbacks = await this.firstProductImages("category", missing)
+        return new Map([...own].map(([id, url]) => [id, url ?? fallbacks.get(id) ?? null]))
     }
 
     /**
@@ -151,21 +185,14 @@ export class CategoryService {
         }))
     }
 
-    static async getSubCategoryWithProducts(locale: Locale, categorySlug: string, subCategorySlug: string) {
-        const resolved = await resolveSubCategory(locale, categorySlug, subCategorySlug)
-        if (resolved.kind !== "found") return null
-
-        const products = await prisma.product.findMany({
-            where: { subCategoryId: resolved.value.id, ...liveProduct },
-            orderBy: [{ isFeatured: "desc" }, { order: "asc" }],
-            include: productCardInclude(locale),
+    /** The hero's category tile: the first live category's slug and photo, nothing else. */
+    static async getFirstCategoryTile(locale: Locale): Promise<{ slug: string | null; imageUrl: string | null } | null> {
+        const category = await prisma.category.findFirst({
+            where: { isActive: true, deletedAt: null },
+            orderBy: { order: "asc" },
+            select: { imageUrl: true, translations: { ...translationsFor(locale), select: { slug: true } } },
         })
-
-        const discounts = await activeDiscounts()
-        return {
-            ...resolved.value,
-            products: this.sortForLocale(products, locale).map((product) => toCardView(product, discounts)),
-        }
+        return category ? { slug: category.translations[0]?.slug ?? null, imageUrl: category.imageUrl } : null
     }
 
     static async getProductsWithUniqueVariants(locale: Locale, categorySlug: string, subCategorySlug: string) {
@@ -253,9 +280,12 @@ export class CategoryService {
         const subCategories = await prisma.subCategory.findMany({
             where: liveSubCategory,
             orderBy: { order: "asc" },
-            include: {
-                translations: translationsFor(locale),
-                category: { include: { translations: translationsFor(locale) } },
+            select: {
+                id: true,
+                translations: { ...translationsFor(locale), select: { slug: true, name: true } },
+                category: {
+                    select: { translations: { ...translationsFor(locale), select: { slug: true, name: true } } },
+                },
             },
         })
 
@@ -276,3 +306,13 @@ export class CategoryService {
         })
     }
 }
+
+/**
+ * The footer's section list, shared by every storefront page. Cached across requests (it is
+ * plain strings, so it round-trips) and purged with the `catalog` tag by /api/revalidate.
+ */
+export const cachedFooterSubCategories = unstable_cache(
+    (locale: Locale) => CategoryService.getFooterSubCategories(locale),
+    ["footer-sub-categories"],
+    { revalidate: 900, tags: ["catalog"] }
+)

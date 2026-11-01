@@ -56,7 +56,7 @@ export interface SearchResult {
 function resultInclude(locale: Locale) {
     return {
         translations: translationsFor(locale),
-        images: { orderBy: { order: "asc" as const } },
+        images: { orderBy: { order: "asc" as const }, take: 1 },
         specs: { where: { specKey: { in: [...RESULT_SPEC_KEYS] } } },
         subCategory: {
             include: {
@@ -107,9 +107,12 @@ function toResult(
     }
 }
 
+const MIN_SEARCH_LENGTH = 2
+const SEARCH_RESULT_LIMIT = 8
+
 export async function searchProducts(searchItem: string, requestedLocale: string = "en"): Promise<SearchResult[]> {
     const searchTerm = searchItem.trim()
-    if (!searchTerm) return []
+    if (searchTerm.length < MIN_SEARCH_LENGTH) return []
 
     const locale = resolveLocale(requestedLocale)
     const contains = { contains: searchTerm, mode: "insensitive" } as const
@@ -151,97 +154,11 @@ export async function searchProducts(searchItem: string, requestedLocale: string
         },
         include: resultInclude(locale),
         orderBy: [{ isFeatured: "desc" }, { order: "asc" }],
-        take: 20,
+        take: SEARCH_RESULT_LIMIT,
     })
 
     const discounts = await activeDiscounts()
     return Array.from(new Map(products.map((p) => [p.id, p])).values()).map((p) =>
         toResult(p, locale, discounts)
     )
-}
-
-export async function advancedSearchProducts(filters: {
-    searchTerm?: string
-    categorySlug?: string
-    subCategorySlug?: string
-    minWattage?: number
-    maxWattage?: number
-    colorTemp?: string[]
-    ipRating?: string[]
-    minPrice?: number
-    maxPrice?: number
-    locale?: string
-}): Promise<SearchResult[]> {
-    const {
-        searchTerm = "",
-        categorySlug,
-        subCategorySlug,
-        minWattage,
-        maxWattage,
-        colorTemp,
-        ipRating,
-        minPrice,
-        maxPrice,
-    } = filters
-
-    const locale = resolveLocale(filters.locale)
-    const contains = { contains: searchTerm, mode: "insensitive" } as const
-    const and: Array<Record<string, unknown>> = []
-
-    if (categorySlug) {
-        and.push({ subCategory: { category: { translations: { some: { locale, slug: categorySlug } } } } })
-    }
-    if (subCategorySlug) {
-        and.push({ subCategory: { translations: { some: { locale, slug: subCategorySlug } } } })
-    }
-
-    if (minWattage !== undefined || maxWattage !== undefined) {
-        and.push({
-            specs: {
-                some: {
-                    specKey: "maximum_wattage",
-                    valueNumber: {
-                        ...(minWattage !== undefined ? { gte: minWattage } : {}),
-                        ...(maxWattage !== undefined ? { lte: maxWattage } : {}),
-                    },
-                },
-            },
-        })
-    }
-
-    if (minPrice !== undefined || maxPrice !== undefined) {
-        and.push({
-            price: {
-                ...(minPrice !== undefined ? { gte: minPrice } : {}),
-                ...(maxPrice !== undefined ? { lte: maxPrice } : {}),
-            },
-        })
-    }
-
-    if (colorTemp?.length) {
-        and.push({ colorTemperatures: { hasSome: colorTemp } })
-    }
-    if (ipRating?.length) {
-        const values = ipRating.map((value) => (/^IP/i.test(value) ? value.toUpperCase() : `IP${value}`))
-        and.push({ specs: { some: { specKey: "ip_rating", valueEn: { in: values } } } })
-    }
-
-    if (searchTerm) {
-        and.push({
-            OR: [
-                { translations: { some: { locale, OR: [{ name: contains }, { description: contains }] } } },
-                { productId: contains },
-            ],
-        })
-    }
-
-    const products = await prisma.product.findMany({
-        where: { isActive: true, deletedAt: null, ...(and.length ? { AND: and } : {}) },
-        include: resultInclude(locale),
-        orderBy: [{ isFeatured: "desc" }, { order: "asc" }],
-        take: 50,
-    })
-
-    const discounts = await activeDiscounts()
-    return products.map((p) => toResult(p, locale, discounts))
 }

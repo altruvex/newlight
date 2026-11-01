@@ -13,7 +13,7 @@ import { StockIndicator, formatCount } from "@/components/stock-status"
 import ProductSurfaceColorButtons from "@/components/surface-color-button"
 import { Button } from "@/components/ui/button"
 import { Link, useRouter } from "@/i18n/navigation"
-import type { ProductDetailView } from "@/lib/services/product-service"
+import type { ProductPageView } from "@/lib/services/product-service"
 import { DiscountBadge, PriceTag } from "@/components/price-tag"
 import { useSession } from "@/lib/auth-client"
 import { useMutation } from "@tanstack/react-query"
@@ -25,7 +25,7 @@ import { toast } from "sonner"
 
 interface ProductPageProps {
     assurance?: React.ReactNode
-    product: ProductDetailView
+    product: ProductPageView
 }
 
 export default function ProductIdPage({ product, assurance }: ProductPageProps) {
@@ -37,7 +37,7 @@ export default function ProductIdPage({ product, assurance }: ProductPageProps) 
 
     const [selectedImageIndex, setSelectedImageIndex] = useState(0)
     const [selectedColorTemp, setSelectedColorTemp] = useState<string>(product.colorTemperatures[0] || "")
-    const availableColorKeys = product.availableColors.map((link) => link.color.key)
+    const availableColorKeys = product.colorKeys
     const [surfaceColor, setSurfaceColor] = useState<string>(availableColorKeys[0] ?? "")
     const [quantity, setQuantity] = useState(1)
     const [isAddingToCart, setIsAddingToCart] = useState(false)
@@ -47,16 +47,15 @@ export default function ProductIdPage({ product, assurance }: ProductPageProps) 
     const maxQuantity = Math.max(1, product.stockAvailable)
     const atMaxQuantity = !isOutOfStock && quantity >= maxQuantity
 
-    const productTranslation = product.translations[0]
-    const subCategoryTranslation = product.subCategory.translations[0]
-    const categoryTranslation = product.subCategory.category.translations[0]
+    const productTranslation = product.translation
+    const subCategoryTranslation = product.subCategory
 
     const productName = productTranslation?.name || product.productId
     const productDescription = productTranslation?.description
     const subCategoryName = subCategoryTranslation?.name ?? ""
-    const categoryName = categoryTranslation?.name ?? ""
+    const categoryName = product.category?.name ?? ""
     const subCategorySlug = subCategoryTranslation?.slug ?? ""
-    const categorySlug = categoryTranslation?.slug ?? ""
+    const categorySlug = product.category?.slug ?? ""
 
     const { mutate: saveConfig, isPending: isSaving } = useMutation({
         mutationKey: ["save-configuration", product.productId],

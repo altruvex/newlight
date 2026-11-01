@@ -10,6 +10,7 @@ import { constructMetadata } from "@/lib/metadata"
 import { createPageCanonicalUrl } from "@/lib/canonical-url"
 import { Container, PageHeader } from "@/components/layout/section"
 import { Button } from "@/components/ui/button"
+import { Pager } from "@/components/pager"
 import { EmptyState } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import type { SupportedLanguage } from "@/types"
@@ -80,7 +81,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                                                 {order.createdAt.toLocaleDateString(locale === "ar" ? "ar-EG" : "en-GB")}
                                             </time>
                                             {" · "}
-                                            {t("items", { count: order.items.length })}
+                                            {t("items", { count: order.itemCount })}
                                         </p>
                                     </div>
 
@@ -103,9 +104,9 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                                             />
                                         ) : null
                                     )}
-                                    {order.items.length > 5 && (
+                                    {order.itemCount > 5 && (
                                         <span className="grid size-14 place-items-center rounded-md border text-sm text-muted-foreground">
-                                            +{order.items.length - 5}
+                                            +{order.itemCount - 5}
                                         </span>
                                     )}
                                 </div>
@@ -136,27 +137,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                     </ul>
                 )}
 
-                {totalPages > 1 && (
-                    <nav className="mt-10 flex items-center justify-between" aria-label={t("heading")}>
-                        <Button variant="outline" disabled={page <= 1} asChild={page > 1}>
-                            {page > 1 ? (
-                                <Link href={`/orders?page=${page - 1}`}>{t("previous")}</Link>
-                            ) : (
-                                <span>{t("previous")}</span>
-                            )}
-                        </Button>
-                        <span className="text-sm tabular-nums text-muted-foreground">
-                            {t("page", { page, total: totalPages })}
-                        </span>
-                        <Button variant="outline" disabled={page >= totalPages} asChild={page < totalPages}>
-                            {page < totalPages ? (
-                                <Link href={`/orders?page=${page + 1}`}>{t("next")}</Link>
-                            ) : (
-                                <span>{t("next")}</span>
-                            )}
-                        </Button>
-                    </nav>
-                )}
+                <Pager page={page} totalPages={totalPages} basePath="/orders" label={t("heading")} />
             </Container>
         </>
     )

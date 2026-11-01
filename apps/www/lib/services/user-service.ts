@@ -4,6 +4,9 @@ export interface UserWithAddress extends User {
     shippingAddress: ShippingAddress | null
 }
 
+/** Order items loaded per order in a list; `itemCount` carries the real total. */
+const ORDER_PREVIEW_ITEMS = 5
+
 export class UserService {
 
     static async getUserWithAddress(userId: string): Promise<UserWithAddress | null> {
@@ -105,18 +108,33 @@ export class UserService {
         const [rows, total] = await Promise.all([
             prisma.order.findMany({
                 where: { userId },
-                include: {
+                select: {
+                    id: true,
+                    orderNumber: true,
+                    status: true,
+                    createdAt: true,
+                    subtotal: true,
+                    shippingCost: true,
+                    tax: true,
+                    total: true,
+                    // Lists show at most a handful of thumbnails; the true count comes from _count.
                     items: {
-                        include: {
+                        take: ORDER_PREVIEW_ITEMS,
+                        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                        select: {
+                            id: true,
+                            price: true,
                             product: {
-                                include: {
+                                select: {
+                                    productId: true,
+                                    slug: true,
                                     translations: translationsFor(locale),
-                                    images: { orderBy: { order: "asc" }, take: 1 },
+                                    images: { orderBy: { order: "asc" }, take: 1, select: { url: true } },
                                 },
                             },
                         },
                     },
-                    shippingAddress: true,
+                    _count: { select: { items: true } },
                 },
                 orderBy: { createdAt: "desc" },
                 skip,
@@ -127,8 +145,9 @@ export class UserService {
             }),
         ])
 
-        const orders = rows.map((order) => ({
+        const orders = rows.map(({ _count, ...order }) => ({
             ...order,
+            itemCount: _count.items,
             subtotal: serializeMoney(order.subtotal),
             shippingCost: serializeMoney(order.shippingCost),
             tax: order.tax === null ? null : serializeMoney(order.tax),
@@ -157,25 +176,25 @@ export class UserService {
     }
 
     static async getUserStats(userId: string) {
-        const [orderCount, totalSpent, orders] = await Promise.all([
-            prisma.order.count({
+        const [byStatus, totalSpent] = await Promise.all([
+            prisma.order.groupBy({
+                by: ["status"],
                 where: { userId },
+                _count: true,
             }),
             // A cancellation is not money spent — the same rule the admin's customer record applies.
             prisma.order.aggregate({
                 where: { userId, status: { not: "cancelled" } },
                 _sum: { total: true },
             }),
-            prisma.order.findMany({
-                where: { userId },
-                select: { status: true },
-            }),
         ])
 
-        const statusCounts = orders.reduce((acc, order) => {
-            acc[order.status] = (acc[order.status] || 0) + 1
-            return acc
-        }, {} as Record<string, number>)
+        const statusCounts: Record<string, number> = {}
+        let orderCount = 0
+        for (const row of byStatus) {
+            statusCounts[row.status] = row._count
+            orderCount += row._count
+        }
 
         return {
             orderCount,

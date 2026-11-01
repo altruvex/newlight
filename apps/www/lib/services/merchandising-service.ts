@@ -1,11 +1,18 @@
-import { encodeSlug, prisma, type ActiveDiscount, type Locale, type SerializedMoney } from "@repo/database"
+import { encodeSlug, prisma, translationsFor, type ActiveDiscount, type Locale, type SerializedMoney } from "@repo/database"
 
 import { activeDiscounts } from "@/lib/discounts"
 import { stockStatusOfLevels, type StockStatus } from "@/lib/stock"
-import { CategoryService } from "./category-service"
 import { allOffers } from "./offers-service"
 import { ProductService } from "./product-service"
-import { liveProduct, productLinkedCardInclude, toCardView, type CardView, type ProductLinkedCard } from "./selectors"
+import {
+    liveCategory,
+    liveProduct,
+    liveSubCategory,
+    productLinkedCardInclude,
+    toCardView,
+    type CardView,
+    type ProductLinkedCard,
+} from "./selectors"
 
 export interface StripCard {
     id: string
@@ -142,13 +149,13 @@ export async function categoryHighlights(categoryId: string, locale: Locale, lim
 
 export async function categoryOffers(
     locale: Locale,
-    categorySlug: string,
+    categoryId: string,
     limit = 12
 ): Promise<{ percentOff: number; cards: StripCard[] } | null> {
-    const offers = await allOffers(locale)
+    const offers = await allOffers(locale, { categoryId, total: limit })
     if (!offers) return null
 
-    const groups = offers.groups.filter((group) => group.categorySlug === categorySlug)
+    const groups = offers.groups
     if (groups.length === 0) return null
 
     const cards: StripCard[] = []
@@ -162,7 +169,7 @@ export async function categoryOffers(
         if (cards.length === before) break
     }
 
-    const percentOff = Math.max(...groups.map((group) => group.summary.percentOff))
+    const percentOff = offers.summary.percentOff
     return cards.length > 0 ? { percentOff, cards } : null
 }
 
@@ -175,25 +182,44 @@ export interface SubCategoryTile {
     count: number
 }
 
-export async function subCategoryTiles(locale: Locale): Promise<SubCategoryTile[]> {
-    const categories = await CategoryService.getAllCategories(locale)
-    return categories.flatMap((category) => {
-        const parent = category.translations[0]
-        if (!parent) return []
-        return category.subCategories.flatMap((subCategory) => {
-            const translation = subCategory.translations[0]
-            if (!translation || subCategory._count.products === 0) return []
-            return [
-                {
-                    id: subCategory.id,
-                    name: translation.name,
-                    parent: parent.name,
-                    href: `/category/${encodeSlug(parent.slug)}/${encodeSlug(translation.slug)}`,
-                    imageUrl: subCategory.imageUrl,
-                    count: subCategory._count.products,
-                },
-            ]
-        })
+/**
+ * The home page's section tiles: the first `limit` live sub-categories that have live products,
+ * in catalogue order (category order, then sub-category order). The "all sections" link next
+ * to them goes to /category for the rest.
+ */
+export async function subCategoryTiles(locale: Locale, limit = 8): Promise<SubCategoryTile[]> {
+    const subCategories = await prisma.subCategory.findMany({
+        where: {
+            ...liveSubCategory,
+            category: { ...liveCategory, translations: { some: { locale } } },
+            translations: { some: { locale } },
+            products: { some: liveProduct },
+        },
+        orderBy: [{ category: { order: "asc" } }, { order: "asc" }, { id: "asc" }],
+        take: limit,
+        select: {
+            id: true,
+            imageUrl: true,
+            translations: { ...translationsFor(locale), select: { name: true, slug: true } },
+            category: { select: { translations: { ...translationsFor(locale), select: { name: true, slug: true } } } },
+            _count: { select: { products: { where: liveProduct } } },
+        },
+    })
+
+    return subCategories.flatMap((subCategory) => {
+        const translation = subCategory.translations[0]
+        const parent = subCategory.category.translations[0]
+        if (!translation || !parent) return []
+        return [
+            {
+                id: subCategory.id,
+                name: translation.name,
+                parent: parent.name,
+                href: `/category/${encodeSlug(parent.slug)}/${encodeSlug(translation.slug)}`,
+                imageUrl: subCategory.imageUrl,
+                count: subCategory._count.products,
+            },
+        ]
     })
 }
 

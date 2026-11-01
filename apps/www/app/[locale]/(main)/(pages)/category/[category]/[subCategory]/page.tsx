@@ -10,6 +10,7 @@ import { OfferBanner } from "@/components/offer-banner"
 import { constructMetadata } from "@/lib/metadata"
 import { createSubCategoryCanonicalUrl } from "@/lib/canonical-url"
 import { allTaxonomyPaths, alternateCategorySlug, alternateSubCategorySlug } from "@/lib/services/taxonomy"
+import { LISTING_PAGE_SIZE } from "@/lib/services/product-facets"
 import SubCategoryPage from "./sub-category-page"
 
 export const revalidate = 900
@@ -112,7 +113,7 @@ export default async function Page({ params }: Props) {
                         { name: sectionName, path: sectionPath },
                     ]),
                     itemListSchema(
-                        view.listing.map((product) => ({
+                        view.listing.slice(0, LISTING_PAGE_SIZE).map((product) => ({
                             name: product.name,
                             path: `${sectionPath}/${encodeSlug(product.slug)}`,
                         })),
@@ -126,7 +127,21 @@ export default async function Page({ params }: Props) {
                     section={view.translations[0]?.name ?? ""}
                 />
             )}
-            <SubCategoryPage subCategory={view} categorySlug={categorySlug} siblings={alsoIn} />
+            <SubCategoryPage
+                subCategory={{
+                    // Only what the client listing reads: not the sub-category and category rows.
+                    id: view.id,
+                    name: sectionName,
+                    slug: view.translations[0]?.slug ?? "",
+                    description: view.translations[0]?.description ?? null,
+                    categoryName: view.category.translations[0]?.name ?? "",
+                    listing: view.listing,
+                    facets: view.facets,
+                    definitions: view.definitions,
+                }}
+                categorySlug={categorySlug}
+                siblings={alsoIn}
+            />
         </>
     )
 }

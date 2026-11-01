@@ -10,7 +10,7 @@ const MAX_CARDS = 12
 
 export async function OffersSection() {
     const locale = resolveLocale(await getLocale())
-    const offers = await allOffers(locale)
+    const offers = await allOffers(locale, { total: MAX_CARDS })
     if (!offers) return null
 
     const t = await getTranslations("offers")
