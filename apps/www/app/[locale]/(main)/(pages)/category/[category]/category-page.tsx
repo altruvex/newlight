@@ -19,7 +19,7 @@ export default function CategoryPage({ category }: CategoryPageProps) {
 
     return (
         <div className="min-h-screen">
-            <section className="py-12 lg:py-20">
+            <section className="pt-6 pb-12 lg:pt-8 lg:pb-20">
                 <Container>
                     <Breadcrumbs
                         className="mb-8"

@@ -98,7 +98,7 @@ function SectionTypeView({
 
     return (
         <div className="min-h-screen">
-            <section className="py-10 lg:py-20">
+            <section className="pt-6 pb-10 lg:pt-8 lg:pb-20">
                 <Container>
                     <Breadcrumbs
                         className="mb-6 lg:mb-8"

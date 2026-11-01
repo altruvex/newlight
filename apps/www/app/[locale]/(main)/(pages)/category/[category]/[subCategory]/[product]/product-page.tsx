@@ -358,10 +358,9 @@ export default function ProductIdPage({ product, assurance }: ProductPageProps) 
 
     return (
         <main className="min-h-screen">
-            <div className="border-b border-border py-24">
+            <div className="border-b border-border py-4">
                 <Container>
                     <Breadcrumbs
-                        className="py-5"
                         items={[
                             { name: categoryName, href: `/category/${categorySlug}` },
                             { name: subCategoryName, href: `/category/${categorySlug}/${subCategorySlug}` },
