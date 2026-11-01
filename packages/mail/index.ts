@@ -19,12 +19,27 @@ export function transport(): MailTransport {
     const from = process.env.EMAIL_FROM
     const resend = resendConfigFromEnv()
 
-    cached = from && resend ? resendTransport(resend, from) : consoleTransport()
-
-    if (cached.name === "console") {
+    if (from && resend) {
+        cached = resendTransport(resend, from)
+    } else if (process.env.VERCEL_ENV === "production") {
+        // In production a missing key must surface as a failure the outbox retries, never as a
+        // console "send" that marks rows SENT with nothing delivered.
+        console.error("[mail] RESEND_API_KEY or EMAIL_FROM is not set in production — mail will fail and stay queued.")
+        cached = unconfiguredTransport()
+    } else {
         console.warn("[mail] no RESEND_API_KEY or no EMAIL_FROM — mail will be logged, not delivered.")
+        cached = consoleTransport()
     }
     return cached
+}
+
+function unconfiguredTransport(): MailTransport {
+    return {
+        name: "unconfigured",
+        async send(): Promise<MailResult> {
+            throw new MailTransportError("mail is not configured: RESEND_API_KEY or EMAIL_FROM is missing", undefined, true)
+        },
+    }
 }
 
 export function __setTransportForTesting(next: MailTransport | null): void {

@@ -1,5 +1,5 @@
 import type { ActorType, OrderStatus, Prisma, PrismaClient } from "./generated/prisma/client"
-import { DEFAULT_LOCATION_ID, recordMovement, release } from "./inventory"
+import { DEFAULT_LOCATION_ID, lockOrderRow, recordMovement, release, reservationExpired } from "./inventory"
 
 export interface Transition {
     from: OrderStatus
@@ -121,116 +121,133 @@ export async function transitionOrder(
     input: TransitionInput,
     afterTransition?: AfterTransition
 ): Promise<TransitionResult> {
-    return prisma.$transaction(async (tx) => {
-        const order = await tx.order.findUnique({
-            where: { id: input.orderId },
-            select: {
-                id: true,
-                status: true,
-                orderNumber: true,
-                items: { select: { id: true, productId: true, quantity: true } },
-            },
-        })
-        if (!order) throw new Error(`order ${input.orderId} not found`)
+    return prisma.$transaction(
+        async (tx) => {
+            // Lock first, read second: a concurrent transition (customer cancels while the admin
+            // ships) waits here and then sees the committed status instead of a stale one.
+            await lockOrderRow(tx, input.orderId)
 
-        if (order.status === input.to) {
-            return {
-                orderId: order.id,
-                from: order.status,
-                to: input.to,
-                alreadyApplied: true,
-                movements: 0,
-                paymentSettled: false,
-            }
-        }
-
-        if (!canTransition(order.status, input.to, input.actor.type)) {
-            throw new IllegalTransitionError(order.status, input.to, input.actor.type)
-        }
-
-        const from = order.status
-        let movements = 0
-
-        if (input.to === "shipped") {
-            for (const item of order.items) {
-                await release(tx, item.productId, item.quantity)
-                const result = await recordMovement(tx, {
-                    productId: item.productId,
-                    locationId: DEFAULT_LOCATION_ID,
-                    type: "SALE",
-                    quantity: -item.quantity,
-                    reason: `order ${order.orderNumber} shipped`,
-                    referenceType: "order",
-                    referenceId: order.id,
-                    actorType: input.actor.type,
-                    actorId: input.actor.id ?? null,
-                })
-                if (!result.deduplicated) movements++
-            }
-        } else if (input.to === "cancelled" && from === "awaiting_shipment") {
-            for (const item of order.items) {
-                await release(tx, item.productId, item.quantity)
-            }
-        } else if (input.to === "cancelled" && (from === "shipped" || from === "delivered")) {
-            for (const item of order.items) {
-                const result = await recordMovement(tx, {
-                    productId: item.productId,
-                    locationId: DEFAULT_LOCATION_ID,
-                    type: "RETURN",
-                    quantity: item.quantity,
-                    reason: input.reason ?? `order ${order.orderNumber} returned`,
-                    referenceType: "order-return",
-                    referenceId: order.id,
-                    actorType: input.actor.type,
-                    actorId: input.actor.id ?? null,
-                })
-                if (!result.deduplicated) movements++
-            }
-        }
-
-        const data: Prisma.OrderUpdateInput = { status: input.to }
-        if (input.to === "shipped") {
-            data.shippedAt = new Date()
-            if (input.trackingNumber) data.trackingNumber = input.trackingNumber
-        }
-        if (input.to === "delivered") data.deliveredAt = new Date()
-        if (input.to === "cancelled" && from === "delivered") data.paymentStatus = "REFUNDED"
-
-        await tx.order.update({ where: { id: order.id }, data })
-
-        const paymentSettled = input.to === "delivered" ? await settlePaymentForDelivery(tx, order.id) : false
-
-        await tx.adminAuditLog.create({
-            data: {
-                actorType: input.actor.type,
-                actorId: input.actor.id ?? null,
-                actorEmail: input.actor.email ?? null,
-                action: `order.${from}->${input.to}`,
-                entity: "Order",
-                entityId: order.id,
-                diff: {
-                    from,
-                    to: input.to,
-                    movements,
-                    paymentSettled,
-                    ...(input.trackingNumber ? { trackingNumber: input.trackingNumber } : {}),
-                    ...(input.reason ? { reason: input.reason } : {}),
+            const order = await tx.order.findUnique({
+                where: { id: input.orderId },
+                select: {
+                    id: true,
+                    status: true,
+                    orderNumber: true,
+                    items: { select: { id: true, productId: true, quantity: true } },
                 },
-            },
-        })
+            })
+            if (!order) throw new Error(`order ${input.orderId} not found`)
 
-        const result: TransitionResult = {
-            orderId: order.id,
-            from,
-            to: input.to,
-            alreadyApplied: false,
-            movements,
-            paymentSettled,
-        }
+            if (order.status === input.to) {
+                return {
+                    orderId: order.id,
+                    from: order.status,
+                    to: input.to,
+                    alreadyApplied: true,
+                    movements: 0,
+                    paymentSettled: false,
+                }
+            }
 
-        if (afterTransition) await afterTransition(tx, result)
-        return result
-    })
+            if (!canTransition(order.status, input.to, input.actor.type)) {
+                throw new IllegalTransitionError(order.status, input.to, input.actor.type)
+            }
+
+            const from = order.status
+            let movements = 0
+
+            // The expiry sweep may already have released this order's reservation (and said so in
+            // the audit log). Releasing again would take another order's reservation; the SALE
+            // movement still has to happen.
+            const holdsReservation = from === "awaiting_shipment" && !(await reservationExpired(tx, order.id))
+
+            if (input.to === "shipped") {
+                for (const item of order.items) {
+                    if (holdsReservation) await release(tx, item.productId, item.quantity)
+                    const result = await recordMovement(tx, {
+                        productId: item.productId,
+                        locationId: DEFAULT_LOCATION_ID,
+                        type: "SALE",
+                        quantity: -item.quantity,
+                        reason: `order ${order.orderNumber} shipped`,
+                        referenceType: "order",
+                        referenceId: order.id,
+                        actorType: input.actor.type,
+                        actorId: input.actor.id ?? null,
+                    })
+                    if (!result.deduplicated) movements++
+                }
+            } else if (input.to === "cancelled" && from === "awaiting_shipment") {
+                if (holdsReservation) {
+                    for (const item of order.items) {
+                        await release(tx, item.productId, item.quantity)
+                    }
+                }
+            } else if (input.to === "cancelled" && (from === "shipped" || from === "delivered")) {
+                for (const item of order.items) {
+                    const result = await recordMovement(tx, {
+                        productId: item.productId,
+                        locationId: DEFAULT_LOCATION_ID,
+                        type: "RETURN",
+                        quantity: item.quantity,
+                        reason: input.reason ?? `order ${order.orderNumber} returned`,
+                        referenceType: "order-return",
+                        referenceId: order.id,
+                        actorType: input.actor.type,
+                        actorId: input.actor.id ?? null,
+                    })
+                    if (!result.deduplicated) movements++
+                }
+            }
+
+            const data: Prisma.OrderUpdateInput = { status: input.to }
+            if (input.to === "shipped") {
+                data.shippedAt = new Date()
+                if (input.trackingNumber) data.trackingNumber = input.trackingNumber
+            }
+            if (input.to === "delivered") data.deliveredAt = new Date()
+            if (input.to === "cancelled" && from === "delivered") data.paymentStatus = "REFUNDED"
+
+            await tx.order.update({ where: { id: order.id }, data })
+
+            const paymentSettled = input.to === "delivered" ? await settlePaymentForDelivery(tx, order.id) : false
+
+            await tx.adminAuditLog.create({
+                data: {
+                    actorType: input.actor.type,
+                    actorId: input.actor.id ?? null,
+                    actorEmail: input.actor.email ?? null,
+                    action: `order.${from}->${input.to}`,
+                    entity: "Order",
+                    entityId: order.id,
+                    diff: {
+                        from,
+                        to: input.to,
+                        movements,
+                        paymentSettled,
+                        ...(input.trackingNumber ? { trackingNumber: input.trackingNumber } : {}),
+                        ...(input.reason ? { reason: input.reason } : {}),
+                    },
+                },
+            })
+
+            const result: TransitionResult = {
+                orderId: order.id,
+                from,
+                to: input.to,
+                alreadyApplied: false,
+                movements,
+                paymentSettled,
+            }
+
+            if (afterTransition) await afterTransition(tx, result)
+            return result
+        },
+        // A 20-line order is ~5 queries per item plus the afterTransition mail enqueue; on a cold
+        // Neon connection that outruns Prisma's default 5s and rolls back with P2028. Isolation
+        // stays at the default — the row lock above covers the race.
+        { timeout: 15_000, maxWait: 5_000 }
+    )
 }
 
 export const ADMIN_ROLES = ["ADMIN", "SUPER_ADMIN"] as const

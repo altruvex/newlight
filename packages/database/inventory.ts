@@ -256,6 +256,33 @@ export async function listLowStock(
 export const RESERVATION_TTL_SETTING = "inventory.reservation_ttl_hours"
 export const DEFAULT_RESERVATION_TTL_HOURS = 72
 
+/**
+ * The audit-log action the sweep writes when it releases an order's reservation without
+ * cancelling the order. `transitionOrder` reads it: an order that carries this row no longer
+ * holds a reservation, so shipping or cancelling it must not call `release()` again —
+ * `release()` clamps to the current `reserved`, and a second release would silently take
+ * another order's reservation.
+ */
+export const RESERVATION_EXPIRED_ACTION = "inventory.reservation_expired"
+
+export async function reservationExpired(tx: InventoryTx, orderId: string): Promise<boolean> {
+    const row = await tx.adminAuditLog.findFirst({
+        where: { entity: "Order", entityId: orderId, action: RESERVATION_EXPIRED_ACTION },
+        select: { id: true },
+    })
+    return row !== null
+}
+
+/**
+ * Locks the order row for the rest of `tx`. Every writer that moves an order or touches its
+ * reservation (`transitionOrder`, the expiry sweep) takes this lock first and re-reads the
+ * status afterwards, so two concurrent writers serialize instead of both acting on the same
+ * stale `awaiting_shipment`.
+ */
+export async function lockOrderRow(tx: InventoryTx, orderId: string): Promise<void> {
+    await tx.$queryRaw`SELECT 1 FROM "orders" WHERE id = ${orderId} FOR UPDATE`
+}
+
 export interface SweepSummary {
     windowHours: number
     ordersConsidered: number
@@ -273,14 +300,11 @@ export async function sweepExpiredReservations(
     const windowHours = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RESERVATION_TTL_HOURS
     const cutoff = new Date(now.getTime() - windowHours * 3_600_000)
 
+    // Only a candidate list: everything that decides whether to release happens under the
+    // order's row lock inside the per-order transaction below.
     const candidates = await prisma.order.findMany({
         where: { status: "awaiting_shipment", createdAt: { lt: cutoff } },
-        select: {
-            id: true,
-            orderNumber: true,
-            createdAt: true,
-            items: { select: { productId: true, quantity: true } },
-        },
+        select: { id: true },
         orderBy: { createdAt: "asc" },
     })
 
@@ -292,23 +316,35 @@ export async function sweepExpiredReservations(
         released: [],
     }
 
-    for (const order of candidates) {
-        const swept = await prisma.adminAuditLog.findFirst({
-            where: { entity: "Order", entityId: order.id, action: "inventory.reservation_expired" },
-            select: { id: true },
-        })
-        if (swept) continue
+    for (const candidate of candidates) {
+        const released = await prisma.$transaction(async (tx) => {
+            await lockOrderRow(tx, candidate.id)
 
-        await prisma.$transaction(async (tx) => {
+            // Re-read under the lock: a transition that committed between the candidate read
+            // and here has already released (cancelled) or consumed (shipped) the reservation.
+            const order = await tx.order.findUnique({
+                where: { id: candidate.id },
+                select: {
+                    id: true,
+                    status: true,
+                    orderNumber: true,
+                    createdAt: true,
+                    items: { select: { productId: true, quantity: true } },
+                },
+            })
+            if (!order || order.status !== "awaiting_shipment") return null
+            if (await reservationExpired(tx, order.id)) return null
+
+            let itemsReleased = 0
             for (const item of order.items) {
                 await release(tx, item.productId, item.quantity)
-                summary.itemsReleased += item.quantity
+                itemsReleased += item.quantity
             }
 
             await tx.adminAuditLog.create({
                 data: {
                     actorType: "SYSTEM",
-                    action: "inventory.reservation_expired",
+                    action: RESERVATION_EXPIRED_ACTION,
                     entity: "Order",
                     entityId: order.id,
                     diff: {
@@ -320,6 +356,9 @@ export async function sweepExpiredReservations(
                 },
             })
 
+            // Direct writes, not @repo/notifications: importing it here would close a
+            // dependency cycle (notifications depends on database). The push sweep picks these
+            // rows up like any other.
             const admins = await tx.user.findMany({
                 where: { role: { in: ["ADMIN", "SUPER_ADMIN"] } },
                 select: { id: true },
@@ -340,13 +379,17 @@ export async function sweepExpiredReservations(
                     })),
                 })
             }
+
+            return { orderNumber: order.orderNumber, createdAt: order.createdAt, itemsReleased }
         })
 
+        if (!released) continue
         summary.ordersReleased++
+        summary.itemsReleased += released.itemsReleased
         summary.released.push({
-            orderId: order.id,
-            orderNumber: order.orderNumber,
-            ageHours: Math.floor((now.getTime() - order.createdAt.getTime()) / 3_600_000),
+            orderId: candidate.id,
+            orderNumber: released.orderNumber,
+            ageHours: Math.floor((now.getTime() - released.createdAt.getTime()) / 3_600_000),
         })
     }
 

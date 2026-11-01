@@ -183,3 +183,26 @@ describe("resendTransport", () => {
         }
     })
 })
+
+describe("resendTransport timeouts", () => {
+    const config = { apiKey: "re_test", baseUrl: "https://api.resend.com", minIntervalMs: 0 }
+    const mail = { to: "customer@example.com", subject: "Hi", html: "<p>Hi</p>", text: "Hi" }
+
+    it("bounds every request with a timeout signal", async () => {
+        fetchMock.mockResolvedValue(jsonResponse(200, { id: "x" }))
+        await resendTransport(config, "no-reply@mail.newlight-eg.com").send(mail)
+
+        const init = fetchMock.mock.calls.at(-1)![1] as RequestInit
+        expect(init.signal).toBeInstanceOf(AbortSignal)
+    })
+
+    it("treats a timeout as retryable, not as a permanent failure", async () => {
+        fetchMock.mockRejectedValue(new DOMException("The operation was aborted due to timeout", "TimeoutError"))
+        await expect(resendTransport(config, "no-reply@mail.newlight-eg.com").send(mail)).rejects.toMatchObject({
+            name: "MailTransportError",
+            status: 408,
+            retryable: true,
+            message: "resend: no response within 10000ms",
+        })
+    })
+})

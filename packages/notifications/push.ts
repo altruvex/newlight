@@ -46,10 +46,25 @@ export function __resetPushTransportForTesting(): void {
     webpushPromise = null
 }
 
-export async function sendPush(target: WebPushTarget, payload: PushPayload): Promise<PushOutcome> {
+/** Socket timeout handed to web-push; a push service that hangs would otherwise hold the sweep. */
+export const PUSH_TIMEOUT_MS = 10_000
+
+/**
+ * `retryable` says whether the same send is worth another sweep: no response (network,
+ * timeout), 408, 429 and 5xx are; a 4xx such as a bad payload or rejected VAPID key fails the
+ * same way every time. `gone` (404/410) is the subscription's problem, not the message's.
+ */
+export type PushAttempt = PushOutcome & { retryable: boolean }
+
+export async function sendPush(target: WebPushTarget, payload: PushPayload): Promise<PushAttempt> {
     const config = vapidConfigFromEnv()
     if (!config) {
-        return { ok: false, gone: false, error: "VAPID is not configured (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT)" }
+        return {
+            ok: false,
+            gone: false,
+            retryable: true,
+            error: "VAPID is not configured (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT)",
+        }
     }
 
     try {
@@ -60,15 +75,22 @@ export async function sendPush(target: WebPushTarget, payload: PushPayload): Pro
             {
                 TTL: 12 * 60 * 60,
                 urgency: payload.priority === "URGENT" || payload.priority === "HIGH" ? "high" : "normal",
+                timeout: PUSH_TIMEOUT_MS,
             }
         )
-        return { ok: true }
+        return { ok: true, retryable: false }
     } catch (error) {
         const status = statusOf(error)
         const message = error instanceof Error ? error.message : String(error)
+        const gone = status === 404 || status === 410
 
-        return { ok: false, gone: status === 404 || status === 410, error: message }
+        return { ok: false, gone, retryable: !gone && isRetryableStatus(status), error: message }
     }
+}
+
+function isRetryableStatus(status: number | null): boolean {
+    if (status === null) return true
+    return status === 408 || status === 429 || status >= 500
 }
 
 function statusOf(error: unknown): number | null {

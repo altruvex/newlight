@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { ActorType, OrderStatus } from "../generated/prisma/client"
 import { createTestDatabase, type TestDatabase } from "./harness"
 import { seedFixture, seedStock, LOCATION_ID, type Fixture } from "./fixtures"
-import { reserve } from "../inventory"
+import { release, reserve, RESERVATION_EXPIRED_ACTION, sweepExpiredReservations } from "../inventory"
 import { canTransition, IllegalTransitionError, transitionOrder, TRANSITIONS } from "../order-state-machine"
 
 let db: TestDatabase
@@ -229,5 +229,129 @@ describe("attribution (F1)", () => {
             transitionOrder(db.prisma, { orderId: order.id, to: "delivered", actor: { type: "CUSTOMER" } })
         ).rejects.toThrow()
         expect(await db.prisma.adminAuditLog.count({ where: { entityId: order.id } })).toBe(0)
+    })
+})
+
+describe("the expiry sweep and transitions share one reservation", () => {
+    const FOUR_DAYS_AGO = new Date(Date.now() - 4 * 24 * 3_600_000)
+
+    beforeAll(async () => {
+        await seedStock(db.prisma, fixture.products.single, 500)
+    })
+
+    async function expiredOrder(productId: string, quantity: number) {
+        const order = await makeOrder(productId, quantity)
+        await db.prisma.order.update({ where: { id: order.id }, data: { createdAt: FOUR_DAYS_AGO } })
+        const sweep = await sweepExpiredReservations(db.prisma)
+        expect(sweep.released.map((o) => o.orderId)).toContain(order.id)
+        return order
+    }
+
+    it("shipping an order whose reservation expired does not release another order's", async () => {
+        const productId = fixture.products.single
+        const before = await level(productId)
+        const expired = await expiredOrder(productId, 4)
+        const other = await makeOrder(productId, 4)
+
+        const result = await transitionOrder(db.prisma, { orderId: expired.id, to: "shipped", actor: { type: "ADMIN" } })
+
+        const after = await level(productId)
+        expect(result.movements).toBe(1)
+        expect(after.onHand).toBe(before.onHand - 4)
+        // `other` still holds its 4; only the expired order's (already released) 4 are gone.
+        expect(after.reserved).toBe(before.reserved + 4)
+
+        await transitionOrder(db.prisma, { orderId: other.id, to: "cancelled", actor: { type: "CUSTOMER" } })
+        expect((await level(productId)).reserved).toBe(before.reserved)
+    })
+
+    it("cancelling an order whose reservation expired does not release another order's", async () => {
+        const productId = fixture.products.single
+        const before = await level(productId)
+        const expired = await expiredOrder(productId, 3)
+        await makeOrder(productId, 3)
+
+        await transitionOrder(db.prisma, { orderId: expired.id, to: "cancelled", actor: { type: "ADMIN" } })
+
+        const after = await level(productId)
+        expect(after.onHand).toBe(before.onHand)
+        expect(after.reserved).toBe(before.reserved + 3)
+    })
+
+    it("applies exactly one of two concurrent transitions", async () => {
+        const productId = fixture.products.single
+        const order = await makeOrder(productId, 5)
+        await makeOrder(productId, 5) // a second reservation a double release would eat into
+        const before = await level(productId)
+
+        // Hold the stock row so both transitions get past their reads before either can write.
+        let open!: () => void
+        const held = new Promise<void>((resolve) => { open = resolve })
+        const barrier = db.prisma.$transaction(
+            async (tx) => {
+                await tx.$queryRaw`SELECT 1 FROM stock_levels WHERE "productId" = ${productId} AND "locationId" = ${LOCATION_ID} FOR UPDATE`
+                await held
+            },
+            { timeout: 20_000 }
+        )
+        await new Promise((resolve) => setTimeout(resolve, 100))
+
+        const racers = Promise.allSettled([
+            transitionOrder(db.prisma, { orderId: order.id, to: "cancelled", actor: { type: "CUSTOMER" } }),
+            transitionOrder(db.prisma, { orderId: order.id, to: "shipped", actor: { type: "ADMIN" } }),
+        ])
+        await new Promise((resolve) => setTimeout(resolve, 400))
+        open()
+        await barrier
+        const outcomes = await racers
+
+        const applied = outcomes.filter((o) => o.status === "fulfilled")
+        const refused = outcomes.filter((o) => o.status === "rejected")
+        expect(applied).toHaveLength(1)
+        expect(refused).toHaveLength(1)
+        expect((refused[0] as PromiseRejectedResult).reason).toBeInstanceOf(IllegalTransitionError)
+
+        const row = await db.prisma.order.findUniqueOrThrow({ where: { id: order.id }, select: { status: true } })
+        const after = await level(productId)
+        expect(after.reserved).toBe(before.reserved - 5)
+        expect(after.onHand).toBe(row.status === "shipped" ? before.onHand - 5 : before.onHand)
+        expect(await db.prisma.adminAuditLog.count({ where: { entityId: order.id } })).toBe(1)
+    })
+
+    it("does not release an order that was cancelled while the sweep was deciding", async () => {
+        const productId = fixture.products.single
+        const order = await makeOrder(productId, 2)
+        await makeOrder(productId, 2)
+        await db.prisma.order.update({ where: { id: order.id }, data: { createdAt: FOUR_DAYS_AGO } })
+        const before = await level(productId)
+
+        // A cancel that holds the order row while the sweep runs, and commits after it.
+        let open!: () => void
+        const held = new Promise<void>((resolve) => { open = resolve })
+        const cancel = db.prisma.$transaction(
+            async (tx) => {
+                await tx.$queryRaw`SELECT 1 FROM orders WHERE id = ${order.id} FOR UPDATE`
+                await held
+                for (const item of await tx.orderItem.findMany({ where: { orderId: order.id } })) {
+                    await release(tx, item.productId, item.quantity)
+                }
+                await tx.order.update({ where: { id: order.id }, data: { status: "cancelled" } })
+            },
+            { timeout: 20_000 }
+        )
+        await new Promise((resolve) => setTimeout(resolve, 100))
+
+        const sweep = sweepExpiredReservations(db.prisma)
+        await new Promise((resolve) => setTimeout(resolve, 400))
+        open()
+        await cancel
+        const summary = await sweep
+
+        expect(summary.released.map((o) => o.orderId)).not.toContain(order.id)
+        expect(
+            await db.prisma.adminAuditLog.count({ where: { entityId: order.id, action: RESERVATION_EXPIRED_ACTION } })
+        ).toBe(0)
+        // Released once (by the cancel), not twice.
+        expect((await level(productId)).reserved).toBe(before.reserved - 2)
     })
 })

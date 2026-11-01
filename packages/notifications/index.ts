@@ -4,7 +4,8 @@ import type { NotificationInput, PushPayload } from "./types"
 
 export * from "./types"
 export { isPushConfigured, publicVapidKey, vapidConfigFromEnv } from "./push"
-export type { WebPushTarget, VapidConfig } from "./push"
+export type { WebPushTarget, VapidConfig, PushAttempt } from "./push"
+export { PUSH_TIMEOUT_MS } from "./push"
 
 const ADMIN_ROLES = ["ADMIN", "SUPER_ADMIN"] as const
 
@@ -112,6 +113,8 @@ export interface PushSummary {
     pruned: number
     failed: number
     skippedStale: number
+    /** Notifications no device received because of a transient failure; unclaimed again for the next sweep. */
+    retried: number
 }
 
 interface ClaimedRow {
@@ -126,7 +129,7 @@ interface ClaimedRow {
 }
 
 export async function dispatchPush(prisma: PrismaClient, limit = 50): Promise<PushSummary> {
-    const summary: PushSummary = { claimed: 0, delivered: 0, pruned: 0, failed: 0, skippedStale: 0 }
+    const summary: PushSummary = { claimed: 0, delivered: 0, pruned: 0, failed: 0, skippedStale: 0, retried: 0 }
 
     if (!isPushConfigured()) return summary
 
@@ -165,10 +168,14 @@ export async function dispatchPush(prisma: PrismaClient, limit = 50): Promise<Pu
     }
 
     const doomed: string[] = []
+    const retry: string[] = []
 
     for (const row of claimed) {
         const targets = byUser.get(row.userId)
         if (!targets || targets.length === 0) continue
+
+        let deliveredToSomeone = false
+        let transientFailure = false
 
         const payload: PushPayload = {
             notificationId: row.id,
@@ -193,6 +200,7 @@ export async function dispatchPush(prisma: PrismaClient, limit = 50): Promise<Pu
         for (const { target, outcome } of outcomes) {
             if (outcome.ok) {
                 summary.delivered++
+                deliveredToSomeone = true
                 await prisma.pushSubscription.updateMany({
                     where: { id: target.id },
                     data: { failureCount: 0, lastSuccessAt: new Date() },
@@ -201,6 +209,7 @@ export async function dispatchPush(prisma: PrismaClient, limit = 50): Promise<Pu
             }
 
             summary.failed++
+            if (outcome.retryable) transientFailure = true
             if (outcome.gone || target.failureCount + 1 >= MAX_CONSECUTIVE_FAILURES) {
                 doomed.push(target.id)
                 continue
@@ -211,6 +220,11 @@ export async function dispatchPush(prisma: PrismaClient, limit = 50): Promise<Pu
             })
             console.warn(`[push] ${row.type} to ${redact(target.endpoint)} failed: ${outcome.error}`)
         }
+
+        // Nobody got it and the failure was transient (timeout, 5xx, 429): hand the row back
+        // to the next sweep. Once any device has it the admin has seen it, so a partial failure
+        // is not re-pushed — that would duplicate it on the device that worked.
+        if (!deliveredToSomeone && transientFailure) retry.push(row.id)
     }
 
     if (doomed.length > 0) {
@@ -218,13 +232,37 @@ export async function dispatchPush(prisma: PrismaClient, limit = 50): Promise<Pu
         summary.pruned = deleted.count
     }
 
+    if (retry.length > 0) {
+        // There is no attempts column, so the cap is the stale window: a row older than
+        // PUSH_STALE_AFTER_MINUTES is stamped without sending at the top of the next sweep,
+        // which ends the retries of anything that keeps failing.
+        const result = await prisma.notification.updateMany({
+            where: { id: { in: retry } },
+            data: { pushedAt: null },
+        })
+        summary.retried = result.count
+    }
+
     return summary
 }
 
-export function dispatchPushSoon(prisma: PrismaClient, limit = 50): void {
-    void dispatchPush(prisma, limit).catch((error) => {
+/**
+ * The awaitable form of the immediate dispatch, for `after()` in a route or server action:
+ * `after(() => dispatchPushNow(prisma))`. Never rejects — a push failure is logged and left
+ * to the cron sweep, exactly as with `dispatchPushSoon`.
+ */
+export async function dispatchPushNow(prisma: PrismaClient, limit = 50): Promise<PushSummary> {
+    try {
+        return await dispatchPush(prisma, limit)
+    } catch (error) {
         console.error("[push] immediate dispatch failed; the cron sweep will retry:", error)
-    })
+        return { claimed: 0, delivered: 0, pruned: 0, failed: 0, skippedStale: 0, retried: 0 }
+    }
+}
+
+/** Fire-and-forget; prefer `dispatchPushNow` inside `after()` so the platform keeps the function alive. */
+export function dispatchPushSoon(prisma: PrismaClient, limit = 50): void {
+    void dispatchPushNow(prisma, limit)
 }
 
 function clamp(text: string, max: number): string {

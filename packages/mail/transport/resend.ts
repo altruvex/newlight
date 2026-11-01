@@ -4,6 +4,8 @@ const DEFAULT_BASE_URL = "https://api.resend.com"
 // Resend's default account limit is 2 requests/second. The outbox sweep claims a batch and
 // sends it in a loop, so without pacing a batch of 25 walks straight into 429s.
 const DEFAULT_MIN_INTERVAL_MS = 550
+// A request that hangs would otherwise hold the whole outbox batch until the function is killed.
+export const REQUEST_TIMEOUT_MS = 10_000
 
 export interface ResendConfig {
     apiKey: string
@@ -100,11 +102,15 @@ export function resendTransport(config: ResendConfig, defaultFrom: string): Mail
                         ...(input.replyTo ? { reply_to: input.replyTo } : {}),
                         ...(tags && tags.length > 0 ? { tags } : {}),
                     }),
+                    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
                 })
             } catch (error) {
-                // No response at all: DNS, TLS, socket, abort. Always worth another attempt.
-                const message = error instanceof Error ? error.message : String(error)
-                throw new MailTransportError(`resend: ${message}`, undefined, true)
+                // No response at all: DNS, TLS, socket, timeout. Always worth another attempt.
+                const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+                const message = timedOut
+                    ? `no response within ${REQUEST_TIMEOUT_MS}ms`
+                    : error instanceof Error ? error.message : String(error)
+                throw new MailTransportError(`resend: ${message}`, timedOut ? 408 : undefined, true)
             }
 
             if (!response.ok) {
