@@ -7,6 +7,8 @@ import { PageBody, PageHeader, PageStack, Panel } from "@/components/page"
 import { EmptyState } from "@/components/states"
 import { cn } from "@/lib/utils"
 
+export const metadata = { title: "Categories" }
+
 export const dynamic = "force-dynamic"
 
 function nameFor(translations: Array<{ locale: string; name: string; slug: string }>, locale: string) {

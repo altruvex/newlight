@@ -11,6 +11,8 @@ import { EmptyState } from "@/components/states"
 import { parseTableState } from "@/lib/table-params"
 import { QueuePager } from "./queue-pager"
 
+export const metadata = { title: "Translations" }
+
 export const dynamic = "force-dynamic"
 
 export default async function TranslationsPage({

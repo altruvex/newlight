@@ -8,10 +8,17 @@ export async function revalidateStorefront(target: RevalidationTarget): Promise<
     // On Vercel the admin -> www service binding injects STOREFRONT_URL (internal and
     // deployment-aware, so a preview admin revalidates its own preview storefront).
     // STOREFRONT_REVALIDATION_URL stays as the fallback for running admin with plain `next dev`.
-    const url = process.env.STOREFRONT_URL
-        ? new URL("api/revalidate", process.env.STOREFRONT_URL)
-        : process.env.STOREFRONT_REVALIDATION_URL
     const secret = process.env.STOREFRONT_REVALIDATION_SECRET
+    let url: URL | string | undefined
+    try {
+        url = process.env.STOREFRONT_URL
+            ? new URL("api/revalidate", process.env.STOREFRONT_URL)
+            : process.env.STOREFRONT_REVALIDATION_URL
+    } catch {
+        // A malformed STOREFRONT_URL must not turn an already committed mutation into an error.
+        console.error("[revalidate] STOREFRONT_URL is not a valid URL; the storefront will serve stale pages until its own timer expires.")
+        return { ok: false, error: "bad url" }
+    }
 
     if (!url || !secret) {
         console.warn("[revalidate] STOREFRONT_URL (or STOREFRONT_REVALIDATION_URL) or STOREFRONT_REVALIDATION_SECRET is not set; the storefront will serve stale pages until its own timer expires.")

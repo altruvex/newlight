@@ -7,6 +7,8 @@ import { TrackingInput } from "./tracking-input"
 import { InlineAlert, PageBody, PageHeader, PageStack, Section, Stat, StatGrid, TableFrame } from "@/components/page"
 import { EmptyState } from "@/components/states"
 
+export const metadata = { title: "Shipping" }
+
 export const dynamic = "force-dynamic"
 
 export default async function ShippingPage() {

@@ -3,6 +3,8 @@ import { Lock } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
+export const metadata = { title: "Not allowed" }
+
 export default function UnauthorizedPage() {
     return (
         <main className="grid min-h-screen place-items-center bg-surface-sunk px-4">

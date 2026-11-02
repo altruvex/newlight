@@ -9,8 +9,7 @@ import { JsonLd, organisationSchema, webSiteSchema } from "@/lib/structured-data
 
 // The offers bar and the footer's section list are read from the database on every page
 // below, so no page here may be cached longer than this. Admin edits purge sooner through
-// /api/revalidate; this ceiling covers what no admin action announces (an offer's window
-// opening or closing, stock moved by orders).
+// /api/revalidate, and an offer starting or ending shortens it (see cachedOffersHighlight).
 export const revalidate = 900
 
 export default async function MainLayout({

@@ -4,6 +4,8 @@ import { parseTableState } from "@/lib/table-params"
 import { InlineAlert, PageBody, PageHeader, PageStack, Stat, StatGrid } from "@/components/page"
 import { ContactTable } from "./contact-table"
 
+export const metadata = { title: "Contact enquiries" }
+
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 

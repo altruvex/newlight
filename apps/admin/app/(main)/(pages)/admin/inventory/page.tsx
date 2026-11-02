@@ -6,6 +6,8 @@ import { StockTable } from "./stock-table"
 import { InlineAlert, PageBody, PageHeader, PageStack, Panel, Section, Stat, StatGrid } from "@/components/page"
 import { parseTableState } from "@/lib/table-params"
 
+export const metadata = { title: "Inventory" }
+
 export const dynamic = "force-dynamic"
 
 export default async function InventoryPage({

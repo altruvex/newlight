@@ -1,3 +1,4 @@
+import { cleanDescription } from "@/lib/product-description"
 import {
     prisma,
     DEFAULT_LOCATION_ID,
@@ -158,7 +159,7 @@ export function toProductPageView(view: ProductDetailView) {
         colorTemperatures: view.colorTemperatures,
         stockAvailable: view.stockAvailable,
         stockStatus: view.stockStatus,
-        translation: translation ? { name: translation.name, description: translation.description } : null,
+        translation: translation ? { name: translation.name, description: cleanDescription(translation.description) } : null,
         subCategory: subCategory ? { name: subCategory.name, slug: subCategory.slug } : null,
         category: category ? { name: category.name, slug: category.slug } : null,
         images: view.images.map((image) => ({ url: image.url })),

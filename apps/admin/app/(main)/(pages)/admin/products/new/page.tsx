@@ -3,6 +3,8 @@ import { requireCurrentAdmin } from "@/lib/auth"
 import { NewProductForm } from "./new-product-form"
 import { PageBody, PageHeader } from "@/components/page"
 
+export const metadata = { title: "New product" }
+
 export const dynamic = "force-dynamic"
 
 export default async function NewProductPage() {

@@ -4,6 +4,12 @@ import { Almarai, Roboto } from "next/font/google";
 import "./globals.css";
 import { Provider } from "@/components/providers";
 import { Toaster } from "@/components/ui/sonner";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: { default: "NewLight Admin", template: "%s · NewLight Admin" },
+  robots: { index: false, follow: false },
+};
 
 const roboto = Roboto({
   weight: ["400", "500", "700"],

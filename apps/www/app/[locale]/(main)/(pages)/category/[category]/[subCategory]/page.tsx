@@ -3,13 +3,13 @@ import { cache } from "react"
 import { JsonLd, breadcrumbSchema, itemListSchema } from "@/lib/structured-data"
 import { getLocale, getTranslations, setRequestLocale } from "next-intl/server"
 import { notFound, permanentRedirect } from "next/navigation"
-import { encodeSlug, resolveLocale, type Locale } from "@repo/database"
+import { encodeSlug, resolveLocale } from "@repo/database"
 import { CategoryService } from "@/lib/services/category-service"
 import { offersForSection } from "@/lib/services/offers-service"
 import { OfferBanner } from "@/components/offer-banner"
 import { constructMetadata } from "@/lib/metadata"
 import { createSubCategoryCanonicalUrl } from "@/lib/canonical-url"
-import { allTaxonomyPaths, alternateCategorySlug, alternateSubCategorySlug } from "@/lib/services/taxonomy"
+import { alternateCategorySlug, alternateSubCategorySlug } from "@/lib/services/taxonomy"
 import { LISTING_PAGE_SIZE } from "@/lib/services/product-facets"
 import SubCategoryPage from "./sub-category-page"
 
@@ -78,18 +78,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     })
 }
 
-export async function generateStaticParams() {
-    const locales: Locale[] = ["en", "ar"]
-    const params = await Promise.all(
-        locales.map(async (locale) => {
-            const { subCategories } = await allTaxonomyPaths(locale)
-            return subCategories.flatMap((row) => {
-                const categorySlug = row.subCategory.category.translations[0]?.slug
-                return categorySlug ? [{ locale, category: categorySlug, subCategory: row.slug }] : []
-            })
-        })
-    )
-    return params.flat()
+// Not prebuilt: each page renders on its first visit and is then cached until `revalidate`
+// or a purge. Prerendering every one at deploy kept the build waiting on the database, and
+// Vercel bills build CPU minutes for that waiting.
+export function generateStaticParams() {
+    return []
 }
 
 export default async function Page({ params }: Props) {

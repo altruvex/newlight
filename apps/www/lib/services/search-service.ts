@@ -1,3 +1,4 @@
+import { cleanDescription } from "@/lib/product-description"
 import {
     compareMoney,
     DEFAULT_LOCATION_ID,
@@ -146,7 +147,7 @@ export class SearchService {
                     discountPercent: priced.percentOff,
                     image: product.images[0]?.url ?? null,
                     name: product.translations[0]?.name ?? product.productId,
-                    description: product.translations[0]?.description,
+                    description: cleanDescription(product.translations[0]?.description),
                     categoryName: categoryTranslation?.name,
                     categorySlug: categoryTranslation?.slug,
                     subCategoryName: subCategoryTranslation?.name,

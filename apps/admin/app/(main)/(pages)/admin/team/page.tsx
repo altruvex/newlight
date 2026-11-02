@@ -5,6 +5,8 @@ import { TeamManager } from "./team-manager"
 import { PageBody, PageHeader } from "@/components/page"
 import { StatusBadge } from "@/components/status-badge"
 
+export const metadata = { title: "Administrators" }
+
 export const dynamic = "force-dynamic"
 
 export default async function TeamPage() {

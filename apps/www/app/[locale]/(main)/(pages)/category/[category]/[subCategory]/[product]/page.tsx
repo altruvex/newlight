@@ -1,3 +1,4 @@
+import { cleanDescription } from "@/lib/product-description"
 import type { Metadata } from "next"
 import { cache } from "react"
 import { ProductStrip } from "@/components/product-strip"
@@ -70,7 +71,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return constructMetadata({
         title: translation?.metaTitle || t("title", { name, category: categoryName }),
         description:
-            translation?.metaDescription || translation?.description || t("description", { name, category: categoryName, specs }),
+            translation?.metaDescription || cleanDescription(translation?.description) || t("description", { name, category: categoryName, specs }),
         locale,
         canonicalUrl: createProductCanonicalUrl({
             locale,
@@ -124,7 +125,7 @@ export default async function Page({ params }: Props) {
                     productSchema(
                         {
                             name: productName,
-                            description: view.translations[0]?.description,
+                            description: cleanDescription(view.translations[0]?.description),
                             sku: view.productId,
                             images: view.images.map((image) => image.url),
                             url: productPath,

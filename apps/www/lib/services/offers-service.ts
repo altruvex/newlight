@@ -3,7 +3,7 @@ import { loadActiveDiscounts, Prisma, prisma, resolveEffectivePrice, type Active
 
 import { logger } from "@/lib/logger"
 
-import { activeDiscounts } from "@/lib/discounts"
+import { activeDiscounts, nextDiscountBoundary } from "@/lib/discounts"
 import { liveProduct, productLinkedCardInclude, toCardView, type CardView } from "./selectors"
 
 export interface OfferSummary {
@@ -86,19 +86,28 @@ async function offersHighlight(): Promise<OfferSummary | null> {
     return summariseOffers(await pricedCandidates(where), discounts)
 }
 
+// The longest the offers bar, and every page that shows it, is cached for.
+const OFFERS_CACHE_SECONDS = 900
+
 /**
  * The offers bar, read on every storefront page. Plain numbers and an ISO string, so it
- * round-trips the cache; purged with the `catalog` tag, and never older than the layout's
- * own 900s ceiling (an offer window opening or closing is announced by nothing).
+ * round-trips the cache; purged with the `catalog` tag.
+ *
+ * An offer starting or ending is announced by nothing, so the cache is keyed on the next such
+ * moment and expires then: after it, the key changes and the bar is read again. The shorter
+ * `revalidate` also shortens the cache time of the page rendering it (Next takes the lowest
+ * `unstable_cache` revalidate seen during an ISR render), and every storefront page renders
+ * this bar through the shared layout, so prices on every page switch on time too.
  */
-const offersHighlightCache = unstable_cache(offersHighlight, ["offers-highlight"], {
-    revalidate: 900,
-    tags: ["catalog"],
-})
-
 export async function cachedOffersHighlight(): Promise<OfferSummary | null> {
     try {
-        return await offersHighlightCache()
+        const boundary = await nextDiscountBoundary()
+        const secondsLeft = boundary ? Math.ceil((boundary.getTime() - Date.now()) / 1000) : Infinity
+        const revalidate = Math.max(1, Math.min(OFFERS_CACHE_SECONDS, secondsLeft))
+        return await unstable_cache(offersHighlight, ["offers-highlight", boundary?.toISOString() ?? "none"], {
+            revalidate,
+            tags: ["catalog"],
+        })()
     } catch (error) {
         logger.error({ err: error }, "offers bar unavailable")
         return null

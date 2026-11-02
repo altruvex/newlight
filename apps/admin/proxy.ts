@@ -9,7 +9,13 @@ export default function proxy(request: NextRequest) {
         return NextResponse.next()
     }
     if (!getSessionCookie(request)) {
-        return NextResponse.redirect(new URL("/sign-in", request.url))
+        const signIn = new URL("/sign-in", request.url)
+        // Remember where the admin was going, so sign-in can send them back.
+        // API calls and the bare root go to the default page instead.
+        if (pathname !== "/" && !pathname.startsWith("/api/")) {
+            signIn.searchParams.set("next", pathname + request.nextUrl.search)
+        }
+        return NextResponse.redirect(signIn)
     }
     return NextResponse.next()
 }

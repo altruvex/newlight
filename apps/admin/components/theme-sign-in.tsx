@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { signIn } from "@/lib/auth-client"
 
-export function ThemedSignIn() {
+export function ThemedSignIn({ next = "/admin/dashboard" }: { next?: string }) {
     const router = useRouter()
     const [error, setError] = useState<string | null>(null)
     const [pending, setPending] = useState(false)
@@ -30,7 +30,7 @@ export function ThemedSignIn() {
 
         if (result.error) return setError("Email or password is incorrect.")
 
-        router.push("/admin/dashboard")
+        router.push(next)
         router.refresh()
     }
 

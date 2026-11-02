@@ -9,6 +9,8 @@ import { PageBody, PageHeader, PageStack, Stat, StatGrid, TableFrame } from "@/c
 import { StatusBadge } from "@/components/status-badge"
 import { EmptyState } from "@/components/states"
 
+export const metadata = { title: "Audit log" }
+
 export const dynamic = "force-dynamic"
 
 function linkFor(entity: string, entityId: string): string | null {

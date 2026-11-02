@@ -3,6 +3,8 @@ import { SpecDefinitionService } from "@/lib/services/spec-definition-service"
 import { SpecsManager } from "./specs-manager"
 import { PageBody, PageHeader } from "@/components/page"
 
+export const metadata = { title: "Specifications" }
+
 export const dynamic = "force-dynamic"
 
 export default async function SpecsPage() {

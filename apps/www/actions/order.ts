@@ -14,6 +14,7 @@ import { z } from "zod"
 import { currentIdentity, currentUserId } from "@/lib/auth"
 import { generateIdempotencyKey } from "@/lib/idempotency"
 import { logger } from "@/lib/logger"
+import { refreshShopStock } from "@/lib/refresh-shop"
 import { claimConfiguration, findAccessibleConfiguration } from "@/lib/services/configuration-access"
 import { type OrderErrorCode } from "@/lib/services/order-errors"
 import { OrderService } from "@/lib/services/order-service"
@@ -141,6 +142,8 @@ export async function createOrderFromConfiguration(
 
         revalidatePath("/orders")
         revalidatePath(`/orders/${result.orderId}`)
+        // The order reserved stock; a duplicate submit reserved nothing new.
+        if (!result.isDuplicate) refreshShopStock()
 
         return {
             success: true,
@@ -214,6 +217,8 @@ export async function requestOrderCancellation(orderId: string, reason?: string)
 
         revalidatePath("/orders")
         revalidatePath(`/orders/${orderId}`)
+        // Cancelling releases the order's reserved stock back to sale.
+        if (!result.alreadyApplied) refreshShopStock()
 
         return { success: true, alreadyApplied: result.alreadyApplied }
     } catch (error) {

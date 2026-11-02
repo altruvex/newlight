@@ -3,6 +3,8 @@ import { listProducts } from "@/lib/services/product-list-service"
 import { parseTableState } from "@/lib/table-params"
 import { ProductsTable } from "./products-table"
 
+export const metadata = { title: "Products" }
+
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 

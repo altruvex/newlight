@@ -3,6 +3,8 @@ import { requireCurrentAdmin } from "@/lib/auth"
 import { PricingEditor } from "./pricing-editor"
 import { PageBody, PageHeader } from "@/components/page"
 
+export const metadata = { title: "Bulk repricing" }
+
 export const dynamic = "force-dynamic"
 
 export default async function PricingPage() {

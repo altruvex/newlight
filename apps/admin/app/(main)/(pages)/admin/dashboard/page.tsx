@@ -10,6 +10,8 @@ import { EmptyState } from "@/components/states"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 
+export const metadata = { title: "Dashboard" }
+
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 

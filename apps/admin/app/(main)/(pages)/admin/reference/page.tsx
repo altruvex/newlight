@@ -7,6 +7,8 @@ import { ColorsPanel } from "./colors-panel"
 import { LocationsPanel } from "./locations-panel"
 import { PageBody, PageHeader, pageTabsListClass, pageTabsTriggerClass } from "@/components/page"
 
+export const metadata = { title: "Reference data" }
+
 export const dynamic = "force-dynamic"
 
 export default async function ReferencePage() {

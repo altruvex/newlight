@@ -5,6 +5,8 @@ import { DiscountService } from "@/lib/services/discount-service"
 import { PageBody, PageHeader } from "@/components/page"
 import { DiscountsClient } from "./discounts-client"
 
+export const metadata = { title: "Discounts" }
+
 export const dynamic = "force-dynamic"
 
 export default async function DiscountsPage({

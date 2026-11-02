@@ -1,5 +1,6 @@
 "use client"
 
+import { cleanDescription } from "@/lib/product-description"
 import { encodeSlug, formatMoney, multiplyMoney, subtractMoney } from "@repo/database"
 import { PriceTag } from "@/components/price-tag"
 import { Container } from "@/components/layout/section"
@@ -32,7 +33,7 @@ export function PreviewClient({
     const categoryTranslation = product.subCategory.category.translations[0]
 
     const productName = productTranslation?.name || product.productId
-    const productDescription = productTranslation?.description || undefined
+    const productDescription = cleanDescription(productTranslation?.description)
     const subCategoryName = subCategoryTranslation?.name ?? ""
     const categoryName = categoryTranslation?.name ?? ""
     const categorySlug = categoryTranslation?.slug ?? ""

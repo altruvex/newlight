@@ -4,6 +4,7 @@ import { dispatchOutbox } from "@repo/mail/outbox"
 import { dispatchPush, isPushConfigured } from "@repo/notifications"
 
 import { authorizeCron } from "@/lib/cron-auth"
+import { refreshShopStock } from "@/lib/refresh-shop"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -58,6 +59,9 @@ export async function GET(request: NextRequest) {
                 `[cron:sweep] released reservations on ${summary.ordersReleased} order(s) past ${summary.windowHours}h: ` +
                     summary.released.map((o) => o.orderNumber).join(", ")
             )
+            // Released reservations put stock back on sale, or the shop keeps showing
+            // those items as sold out.
+            refreshShopStock()
         }
         return { ...summary, rateLimitsDeleted }
     })

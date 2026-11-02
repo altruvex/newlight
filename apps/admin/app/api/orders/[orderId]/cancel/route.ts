@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { ForbiddenError, requireCurrentAdmin, UnauthenticatedError } from "@/lib/auth"
 import { logger } from "@/lib/logger"
+import { revalidateStorefront } from "@/lib/revalidate"
 import { OrderService, type TransitionFailure } from "@/lib/services/order-service"
 
 const STATUS_BY_FAILURE: Record<TransitionFailure, number> = {
@@ -34,6 +35,8 @@ export async function PATCH(
         }
 
         logger.info({ orderId, alreadyApplied: result.alreadyApplied }, "order cancelled from the admin panel")
+        // Cancelling releases reserved stock, so the storefront's stock badges change too.
+        await revalidateStorefront({ kind: "all" })
 
         return NextResponse.json(
             { success: true, message: result.message || "Order cancelled successfully" },

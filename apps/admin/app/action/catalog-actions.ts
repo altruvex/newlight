@@ -7,6 +7,7 @@ import { TranslationService, type TranslationFields } from "@/lib/services/trans
 import { InventoryService, InventoryError } from "@/lib/services/inventory-service"
 import { ForbiddenError, UnauthenticatedError } from "@/lib/auth"
 import { logger } from "@/lib/logger"
+import { revalidateStorefront } from "@/lib/revalidate"
 
 const GENERIC_ERROR = "Something went wrong. Try again, and tell an administrator if it keeps happening."
 
@@ -83,6 +84,7 @@ export async function adjustStock(productId: string, quantity: number, reason: s
     return run(async () => {
         if (!Number.isInteger(quantity) || quantity === 0) throw new CatalogError("Enter a whole number that is not zero.")
         await InventoryService.adjust({ productId, quantity, reason })
+        await revalidateStorefront({ kind: "all" })
         revalidatePath(`/admin/products/${productId}`)
         return `Ledger entry written: ${quantity > 0 ? "+" : ""}${quantity}.`
     })
@@ -92,6 +94,7 @@ export async function recordDamage(productId: string, quantity: number, reason: 
     return run(async () => {
         if (!Number.isInteger(quantity) || quantity <= 0) throw new CatalogError("Enter how many units were lost.")
         await InventoryService.recordDamage({ productId, quantity, reason })
+        await revalidateStorefront({ kind: "all" })
         revalidatePath(`/admin/products/${productId}`)
         return `Damage recorded: −${quantity}.`
     })
@@ -110,6 +113,7 @@ export async function receiveStock(
             unitCost: unitCost && unitCost.trim() !== "" ? unitCost.trim() : null,
             reason: reason.trim() || "purchase receipt",
         })
+        await revalidateStorefront({ kind: "all" })
         revalidatePath(`/admin/products/${productId}`)
         return unitCost ? `Received ${quantity}; average cost updated.` : `Received ${quantity}; no cost recorded.`
     })
@@ -137,6 +141,10 @@ export async function bulkReceiveStock(
                 failures.push(`${row.productId}: ${error instanceof InventoryError ? error.message : "failed"}`)
             }
         }
+
+        // Rows that went through are committed even when others failed, so refresh the
+        // storefront's stock before reporting the failures.
+        if (received > 0) await revalidateStorefront({ kind: "all" })
 
         if (failures.length > 0) {
             throw new CatalogError(`${received} received, ${failures.length} failed — ${failures.slice(0, 3).join("; ")}`)

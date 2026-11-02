@@ -3,6 +3,8 @@ import { listCustomers } from "@/lib/services/customer-list-service"
 import { parseTableState } from "@/lib/table-params"
 import { CustomersTable } from "./customers-table"
 
+export const metadata = { title: "Customers" }
+
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
